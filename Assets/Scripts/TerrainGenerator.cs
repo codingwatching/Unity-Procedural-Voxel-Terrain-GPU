@@ -7,6 +7,9 @@ using UnityEngine;
 public class TerrainGenerator : Singleton<TerrainGenerator>
 {
     [SerializeField] Transform target;
+    /// <summary>
+    /// 必须是8的倍数对应CS的线程数
+    /// </summary>
     [SerializeField] Vector3Int chunkSize = Vector3Int.one * 32;
     [SerializeField] Vector2Int chunkSpawnSize = Vector2Int.one * 3;
     [SerializeField] Material chunkMaterial;
@@ -23,6 +26,7 @@ public class TerrainGenerator : Singleton<TerrainGenerator>
     //Queue<ChunkNode> generateChunkQueue = new Queue<ChunkNode>();
     FastPriorityQueue<ChunkNode> generateChunkQueue = new FastPriorityQueue<ChunkNode>(100000);
     int updatingChunks;
+    public ComputeShader voxelComputeShader;
 
     public Vector3Int ChunkSize => chunkSize;
     public Material ChunkMaterial => chunkMaterial;
@@ -61,10 +65,14 @@ public class TerrainGenerator : Singleton<TerrainGenerator>
         if (lastTargetChunkPosition == targetPosition)
             return;
 
+        // 更新队列中每个节点的优先级，同时删除超出范围的节点
         foreach (ChunkNode chunkNode in generateChunkQueue)
         {
             Vector3Int deltaPosition = targetPosition - chunkNode.chunkPosition;
-            if (chunkSpawnSize.x < Mathf.Abs(deltaPosition.x) || chunkSpawnSize.y < Mathf.Abs(deltaPosition.y) || chunkSpawnSize.y < Mathf.Abs(deltaPosition.z))
+            // X 和 Z 使用 chunkSpawnSize.x，Y 使用 chunkSpawnSize.y
+            if (chunkSpawnSize.x < Mathf.Abs(deltaPosition.x) ||
+                chunkSpawnSize.y < Mathf.Abs(deltaPosition.y) ||
+                chunkSpawnSize.x < Mathf.Abs(deltaPosition.z))
             {
                 generateChunkQueue.Remove(chunkNode);
                 continue;
@@ -73,20 +81,24 @@ public class TerrainGenerator : Singleton<TerrainGenerator>
             generateChunkQueue.UpdatePriority(chunkNode, (targetPosition - chunkNode.chunkPosition).sqrMagnitude);
         }
 
+        // 三重循环：X、Y、Z 三个方向生成块
         for (int x = targetPosition.x - chunkSpawnSize.x; x <= targetPosition.x + chunkSpawnSize.x; x++)
         {
-            for (int z = targetPosition.z - chunkSpawnSize.y; z <= targetPosition.z + chunkSpawnSize.y; z++)
+            for (int y = targetPosition.y - chunkSpawnSize.y; y <= targetPosition.y + chunkSpawnSize.y; y++)
             {
-                Vector3Int chunkPosition = new Vector3Int(x, 0, z);
-                if (chunks.ContainsKey(chunkPosition))
-                    continue;
+                for (int z = targetPosition.z - chunkSpawnSize.x; z <= targetPosition.z + chunkSpawnSize.x; z++)
+                {
+                    Vector3Int chunkPosition = new Vector3Int(x, y, z);
+                    if (chunks.ContainsKey(chunkPosition))
+                        continue;
 
-                ChunkNode newNode = new ChunkNode {chunkPosition = chunkPosition};
+                    ChunkNode newNode = new ChunkNode { chunkPosition = chunkPosition };
 
-                if (generateChunkQueue.Contains(newNode))
-                    continue;
+                    if (generateChunkQueue.Contains(newNode))
+                        continue;
 
-                generateChunkQueue.Enqueue(newNode, (targetPosition - chunkPosition).sqrMagnitude);
+                    generateChunkQueue.Enqueue(newNode, (targetPosition - chunkPosition).sqrMagnitude);
+                }
             }
         }
 
@@ -118,23 +130,27 @@ public class TerrainGenerator : Singleton<TerrainGenerator>
 
         Chunk newChunk = chunkGameObject.AddComponent<Chunk>();
         newChunk.Init(chunkPosition, this);
+        // 邻居检查扩展为 3D（遍历 X、Y、Z 三个方向）
         newChunk.CanUpdate += delegate
         {
             for (int x = chunkPosition.x - 1; x <= chunkPosition.x + 1; x++)
             {
-                for (int z = chunkPosition.z - 1; z <= chunkPosition.z + 1; z++)
+                for (int y = chunkPosition.y - 1; y <= chunkPosition.y + 1; y++)
                 {
-                    Vector3Int neighborChunkPosition = new Vector3Int(x, chunkPosition.y, z);
-                    if (chunks.TryGetValue(neighborChunkPosition, out Chunk neighborChunk))
+                    for (int z = chunkPosition.z - 1; z <= chunkPosition.z + 1; z++)
                     {
-                        if (!neighborChunk.Initialized)
+                        Vector3Int neighborChunkPosition = new Vector3Int(x, y, z);
+                        if (chunks.TryGetValue(neighborChunkPosition, out Chunk neighborChunk))
+                        {
+                            if (!neighborChunk.Initialized)
+                            {
+                                return false;
+                            }
+                        }
+                        else
                         {
                             return false;
                         }
-                    }
-                    else
-                    {
-                        return false;
                     }
                 }
             }
@@ -210,7 +226,12 @@ public class TerrainGenerator : Singleton<TerrainGenerator>
         }
         return false;
     }
-
+    /// <summary>
+    /// 获取立体临近的方块 周围26个(不包括自己)
+    /// </summary>
+    /// <param name="chunkPosition"></param>
+    /// <param name="numNeighbor"></param>
+    /// <returns></returns>
     public List<Voxel[]> GetNeighborVoxels(Vector3Int chunkPosition, int numNeighbor)
     {
         List<Voxel[]> neighborVoxels = new List<Voxel[]>();

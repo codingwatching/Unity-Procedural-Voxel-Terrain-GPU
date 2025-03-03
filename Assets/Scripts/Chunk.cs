@@ -1,8 +1,6 @@
 ﻿using System;
 using System.Collections;
-using System.Collections.Generic;
 using OptIn.Voxel;
-using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -28,9 +26,7 @@ public class Chunk : MonoBehaviour
     MeshCollider meshCollider;
 
     public event Func<bool> CanUpdate;
-
-    NoiseGenerator.NativeVoxelData voxelData;
-    VoxelLightBuilder.NativeLightData lightData;
+    GPUVoxelData voxelData;
     VoxelMeshBuilder.NativeMeshData meshData;
 
     public bool Dirty => dirty;
@@ -49,12 +45,9 @@ public class Chunk : MonoBehaviour
 
     void OnDestroy()
     {
-        voxelData?.jobHandle.Complete();
         voxelData?.Dispose();
         meshData?.jobHandle.Complete();
         meshData?.Dispose();
-        lightData?.jobHandle.Complete();
-        lightData?.Dispose();
     }
 
     void Start()
@@ -77,8 +70,8 @@ public class Chunk : MonoBehaviour
     {
         int numVoxels = chunkSize.x * chunkSize.y * chunkSize.z;
         voxels =  new Voxel[numVoxels];
-        voxelData = new NoiseGenerator.NativeVoxelData(VoxelUtil.ToInt3(chunkSize));
-        yield return voxelData.Generate(voxels, VoxelUtil.ToInt3(chunkPosition), VoxelUtil.ToInt3(chunkSize));
+        voxelData = new GPUVoxelData(VoxelUtil.ToInt3(chunkSize));
+        yield return voxelData.Generate(voxels, VoxelUtil.ToInt3(chunkPosition), VoxelUtil.ToInt3(chunkSize), generator.voxelComputeShader);
         dirty = true;
         initialized = true;
     }
@@ -110,16 +103,13 @@ public class Chunk : MonoBehaviour
 
         generator.UpdatingChunks++;
         
-        int3 chunkSizeInt3 = VoxelUtil.ToInt3(chunkSize);
+        //int3 chunkSizeInt3 = VoxelUtil.ToInt3(chunkSize);
 
-        List<Voxel[]> neighborVoxels = generator.GetNeighborVoxels(chunkPosition, 1);
+        //List<Voxel[]> neighborVoxels = generator.GetNeighborVoxels(chunkPosition, 1);
         
-        lightData?.Dispose();
-        lightData = new VoxelLightBuilder.NativeLightData(chunkSizeInt3);
-        yield return lightData.ScheduleLightingJob(neighborVoxels, VoxelUtil.ToInt3(chunkPosition), chunkSizeInt3, 1, argent);
         meshData?.Dispose();
         meshData = new VoxelMeshBuilder.NativeMeshData(VoxelUtil.ToInt3(chunkSize));
-        yield return meshData.ScheduleMeshingJob(voxels, lightData, VoxelUtil.ToInt3(chunkSize), generator.SimplifyingMethod, argent);
+        yield return meshData.ScheduleMeshingJob(voxels, VoxelUtil.ToInt3(chunkSize), generator.SimplifyingMethod, argent);
         
         meshData.GetMeshInformation(out int verticeSize, out int indicesSize);
         
@@ -141,7 +131,6 @@ public class Chunk : MonoBehaviour
                 VoxelColliderBuilder.Instance.Enqueue(this, mesh);
         }
         
-        lightData.Dispose();
         meshData.Dispose();
         dirty = false;
         argent = false;

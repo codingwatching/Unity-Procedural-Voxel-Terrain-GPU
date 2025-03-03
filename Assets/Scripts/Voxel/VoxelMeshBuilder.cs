@@ -82,30 +82,28 @@ namespace OptIn.Voxel
                     nativeColors.Dispose();
             }
 
-            public IEnumerator ScheduleMeshingJob(Voxel[] voxels, VoxelLightBuilder.NativeLightData lightData, int3 chunkSize, SimplifyingMethod method, bool argent = false)
+            public IEnumerator ScheduleMeshingJob(Voxel[] voxels, int3 chunkSize, SimplifyingMethod method, bool argent = false)
             {
                 nativeVoxels.CopyFrom(voxels);
                 switch (method)
                 {
                     case SimplifyingMethod.Culling:
-                        ScheduleCullingJob(nativeVoxels, lightData, chunkSize);
+                        ScheduleCullingJob(nativeVoxels, chunkSize);
                         break;
                     case SimplifyingMethod.GreedyOnlyHeight:
-                        ScheduleGreedyOnlyHeightJob(nativeVoxels, lightData, chunkSize);
+                        ScheduleGreedyOnlyHeightJob(nativeVoxels, chunkSize);
                         break;
                     case SimplifyingMethod.Greedy:
-                        ScheduleGreedyJob(nativeVoxels, lightData, chunkSize);
+                        ScheduleGreedyJob(nativeVoxels, chunkSize);
                         break;
                     default:
-                        ScheduleGreedyJob(nativeVoxels, lightData, chunkSize);
+                        ScheduleGreedyJob(nativeVoxels, chunkSize);
                         break;
                 }
                 
-                int frameCount = lightData.frameCount;
                 yield return new WaitUntil(() =>
                 {
-                    frameCount++;
-                    return jobHandle.IsCompleted || frameCount >= 4 || argent;
+                    return jobHandle.IsCompleted || argent;
                 });
                 
                 jobHandle.Complete();
@@ -117,7 +115,7 @@ namespace OptIn.Voxel
                 indicesSize = counter.Count * 6;
             }
             
-            void ScheduleCullingJob(NativeArray<Voxel> voxels, VoxelLightBuilder.NativeLightData lightData, int3 chunkSize)
+            void ScheduleCullingJob(NativeArray<Voxel> voxels, int3 chunkSize)
             {
                 VoxelCullingJob voxelCullingJob = new VoxelCullingJob
                 {
@@ -128,7 +126,6 @@ namespace OptIn.Voxel
                     uvs = nativeUVs,
                     indices = nativeIndices,
                     colors = nativeColors,
-                    lightData = lightData.nativeLightData,
                     counter = counter,
                 };
 
@@ -136,7 +133,7 @@ namespace OptIn.Voxel
                 JobHandle.ScheduleBatchedJobs();
             }
 
-            void ScheduleGreedyOnlyHeightJob(NativeArray<Voxel> voxels, VoxelLightBuilder.NativeLightData lightData, int3 chunkSize)
+            void ScheduleGreedyOnlyHeightJob(NativeArray<Voxel> voxels, int3 chunkSize)
             {
                 VoxelGreedyMeshingOnlyHeightJob voxelMeshingOnlyHeightJob = new VoxelGreedyMeshingOnlyHeightJob
                 {
@@ -147,7 +144,6 @@ namespace OptIn.Voxel
                     uvs = nativeUVs,
                     indices = nativeIndices,
                     colors = nativeColors,
-                    lightData = lightData.nativeLightData,
                     counter = counter,
                 };
 
@@ -155,7 +151,7 @@ namespace OptIn.Voxel
                 JobHandle.ScheduleBatchedJobs();
             }
 
-            void ScheduleGreedyJob(NativeArray<Voxel> voxels, VoxelLightBuilder.NativeLightData lightData, int3 chunkSize)
+            void ScheduleGreedyJob(NativeArray<Voxel> voxels, int3 chunkSize)
             {
                 VoxelGreedyMeshingJob voxelMeshingOnlyHeightJob = new VoxelGreedyMeshingJob
                 {
@@ -166,7 +162,6 @@ namespace OptIn.Voxel
                     uvs = nativeUVs,
                     indices = nativeIndices,
                     colors = nativeColors,
-                    lightData = lightData.nativeLightData,
                     counter = counter,
                 };
 
@@ -180,7 +175,6 @@ namespace OptIn.Voxel
         {
             [ReadOnly] public NativeArray<Voxel> voxels;
             [ReadOnly] public int3 chunkSize;
-            [ReadOnly] public NativeArray<VoxelLight> lightData;
 
             [NativeDisableParallelForRestriction] [WriteOnly]
             public NativeArray<float3> vertices;
@@ -214,7 +208,7 @@ namespace OptIn.Voxel
                     if (TransparencyCheck(voxels, neighborPosition, chunkSize))
                         continue;
 
-                    AddQuadByDirection(direction, voxel.data, lightData[index], 1.0f, 1.0f, gridPosition, counter.Increment(), vertices, normals, uvs, colors, indices);
+                    AddQuadByDirection(direction, voxel.data, 1.0f, 1.0f, gridPosition, counter.Increment(), vertices, normals, uvs, colors, indices);
                 }
             }
         }
@@ -224,7 +218,6 @@ namespace OptIn.Voxel
         {
             [ReadOnly] public NativeArray<Voxel> voxels;
             [ReadOnly] public int3 chunkSize;
-            [ReadOnly] public NativeArray<VoxelLight> lightData;
 
             [NativeDisableParallelForRestriction] [WriteOnly]
             public NativeArray<float3> vertices;
@@ -266,7 +259,7 @@ namespace OptIn.Voxel
                                 if (TransparencyCheck(voxels, neighborPosition, chunkSize))
                                     continue;
 
-                                AddQuadByDirection(direction, voxel.data, lightData[index], 1.0f, 1.0f, gridPosition, counter.Increment(), vertices, normals, uvs, colors, indices);
+                                AddQuadByDirection(direction, voxel.data, 1.0f, 1.0f, gridPosition, counter.Increment(), vertices, normals, uvs, colors, indices);
                             }
                         }
                     }
@@ -279,7 +272,6 @@ namespace OptIn.Voxel
         {
             [ReadOnly] public NativeArray<Voxel> voxels;
             [ReadOnly] public int3 chunkSize;
-            [ReadOnly] public NativeArray<VoxelLight> lightData;
 
             [NativeDisableParallelForRestriction] [WriteOnly]
             public NativeArray<float3> vertices;
@@ -318,7 +310,6 @@ namespace OptIn.Voxel
                                 int index = VoxelUtil.To1DIndex(gridPosition, chunkSize);
                                 
                                 Voxel voxel = voxels[index];
-                                VoxelLight light = lightData[index];
                                 
                                 if (voxel.data == Voxel.VoxelType.Air)
                                 {
@@ -343,16 +334,12 @@ namespace OptIn.Voxel
                                     int nextIndex = VoxelUtil.To1DIndex(nextPosition, chunkSize);
 
                                     Voxel nextVoxel = voxels[nextIndex];
-                                    VoxelLight nextLight = lightData[nextIndex];
 
                                     if (nextVoxel.data != voxel.data)
                                         break;
-
-                                    if (!light.CompareFace(nextLight, direction))
-                                        break;
                                 }
 
-                                AddQuadByDirection(direction, voxel.data, light, 1.0f, height, gridPosition, counter.Increment(), vertices, normals, uvs, colors, indices);
+                                AddQuadByDirection(direction, voxel.data, 1.0f, height, gridPosition, counter.Increment(), vertices, normals, uvs, colors, indices);
                                 y += height;
                             }
                         }
@@ -366,7 +353,6 @@ namespace OptIn.Voxel
         {
             [ReadOnly] public NativeArray<Voxel> voxels;
             [ReadOnly] public int3 chunkSize;
-            [ReadOnly] public NativeArray<VoxelLight> lightData;
 
             [NativeDisableParallelForRestriction] [WriteOnly]
             public NativeArray<float3> vertices;
@@ -391,7 +377,7 @@ namespace OptIn.Voxel
             {
                 for (int direction = 0; direction < 6; direction++)
                 {
-                    NativeHashMap<int3, Empty> hashMap = new NativeHashMap<int3, Empty>(chunkSize[VoxelUtil.DirectionAlignedX[direction]] * chunkSize[VoxelUtil.DirectionAlignedY[direction]], Allocator.Temp);
+                    NativeParallelHashMap<int3, Empty> hashMap = new NativeParallelHashMap<int3, Empty>(chunkSize[VoxelUtil.DirectionAlignedX[direction]] * chunkSize[VoxelUtil.DirectionAlignedY[direction]], Allocator.Temp);
                     for (int depth = 0; depth < chunkSize[VoxelUtil.DirectionAlignedZ[direction]]; depth++)
                     {
                         for (int x = 0; x < chunkSize[VoxelUtil.DirectionAlignedX[direction]]; x++)
@@ -422,8 +408,6 @@ namespace OptIn.Voxel
                                     continue;
                                 }
                                 
-                                VoxelLight light = lightData[VoxelUtil.To1DIndex(gridPosition, chunkSize)];
-
                                 hashMap.TryAdd(gridPosition, new Empty());
 
                                 int height;
@@ -433,12 +417,8 @@ namespace OptIn.Voxel
                                     nextPosition[VoxelUtil.DirectionAlignedY[direction]] += height;
 
                                     Voxel nextVoxel = voxels[VoxelUtil.To1DIndex(nextPosition, chunkSize)];
-                                    VoxelLight nextLight = lightData[VoxelUtil.To1DIndex(nextPosition, chunkSize)];
 
                                     if (nextVoxel.data != voxel.data)
-                                        break;
-
-                                    if (!nextLight.CompareFace(light, direction))
                                         break;
 
                                     if (hashMap.ContainsKey(nextPosition))
@@ -458,9 +438,8 @@ namespace OptIn.Voxel
                                         nextPosition[VoxelUtil.DirectionAlignedY[direction]] += dy;
 
                                         Voxel nextVoxel = voxels[VoxelUtil.To1DIndex(nextPosition, chunkSize)];
-                                        VoxelLight nextLight = lightData[VoxelUtil.To1DIndex(nextPosition, chunkSize)];
 
-                                        if (nextVoxel.data != voxel.data || hashMap.ContainsKey(nextPosition) || !nextLight.CompareFace(light, direction))
+                                        if (nextVoxel.data != voxel.data || hashMap.ContainsKey(nextPosition))
                                         {
                                             isDone = true;
                                             break;
@@ -481,7 +460,7 @@ namespace OptIn.Voxel
                                     }
                                 }
                                 
-                                AddQuadByDirection(direction, voxel.data, light, width, height, gridPosition, counter.Increment(), vertices, normals, uvs, colors, indices);
+                                AddQuadByDirection(direction, voxel.data, width, height, gridPosition, counter.Increment(), vertices, normals, uvs, colors, indices);
                                 y += height;
                             }
                         }
@@ -501,7 +480,7 @@ namespace OptIn.Voxel
             return voxels[VoxelUtil.To1DIndex(position, chunkSize)].data != Voxel.VoxelType.Air;
         }
 
-        static unsafe void AddQuadByDirection(int direction, Voxel.VoxelType data, VoxelLight voxelLight, float width, float height, int3 gridPosition, int numFace, NativeArray<float3> vertices, NativeArray<float3> normals, NativeArray<float4> uvs, NativeArray<Color> colors, NativeArray<int> indices)
+        static unsafe void AddQuadByDirection(int direction, Voxel.VoxelType data, float width, float height, int3 gridPosition, int numFace, NativeArray<float3> vertices, NativeArray<float3> normals, NativeArray<float4> uvs, NativeArray<Color> colors, NativeArray<int> indices)
         {
             int numVertices = numFace * 4;
             for (int i = 0; i < 4; i++)
@@ -515,7 +494,6 @@ namespace OptIn.Voxel
 
                 float4 uv = new float4 {x = VoxelUtil.CubeUVs[i].x * width, y = VoxelUtil.CubeUVs[i].y * height, z = atlasPosition.x, w = atlasPosition.y};
 
-                colors[numVertices + i] = new Color(0, 0, 0, voxelLight.ambient[i + direction * 4]);
                 vertices[numVertices + i] = vertex + gridPosition;
                 normals[numVertices + i] = VoxelUtil.VoxelDirectionOffsets[direction];
                 uvs[numVertices + i] = uv;
@@ -524,14 +502,7 @@ namespace OptIn.Voxel
             int numindices = numFace * 6;
             for (int i = 0; i < 6; i++)
             {
-                if (voxelLight.ambient[direction * 4] + voxelLight.ambient[direction * 4 + 3] < voxelLight.ambient[direction * 4 + 1] + voxelLight.ambient[direction * 4 + 2])
-                {
-                    indices[numindices + i] = VoxelUtil.CubeFlipedIndices[direction * 6 + i] + numVertices;
-                }
-                else
-                {
-                    indices[numindices + i] = VoxelUtil.CubeIndices[direction * 6 + i] + numVertices;
-                }
+                indices[numindices + i] = VoxelUtil.CubeIndices[direction * 6 + i] + numVertices;
             }
         }
     }

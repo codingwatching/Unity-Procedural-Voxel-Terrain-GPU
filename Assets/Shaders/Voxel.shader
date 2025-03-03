@@ -72,12 +72,11 @@
                 
             // Albedo comes from a texture tinted by color
             fixed4 c = tex2Dgrad(_MainTex, atlasUV, ddx(atlasUV * _AtlasRec), ddy(atlasUV * _AtlasRec)) * _Color;
-            //fixed4 c = tex2D(_MainTex, atlasUV) * _Color;
-            o.Albedo = lerp(c.rgb, IN.color.rgb, IN.color.a);
+            o.Albedo = c.rgb;
 			o.Alpha  = c.a;
             // Metallic and smoothness come from slider variables
-            o.Metallic = _Metallic;
-            o.Smoothness = _Glossiness;
+            //o.Metallic = _Metallic;
+            //o.Smoothness = _Glossiness;
         }
 
         
