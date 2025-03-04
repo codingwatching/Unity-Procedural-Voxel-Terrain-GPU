@@ -3,7 +3,7 @@
 ## 概述
 这是 **Unity-Procedural-Voxel-Terrain** 的优化版本，完全 **移除了 CPU Jobs 体素生成**，改为 **GPU 计算生成体素**，CPU 仅负责 **网格构建**。在 **克莱因群分形生成** 下，性能提升 **10 倍以上**，实现了真正的分形自由。
 
-## 待办事项
+## Todo
 - **GPU 只回传体素数据，使用体素生成贪婪碰撞体，从而无需回传网格，并直接使用 `Graphics.DrawProceduralIndirect` 在 GPU 上渲染区块**
 
 # Unity-Procedural-Voxel-Terrain
