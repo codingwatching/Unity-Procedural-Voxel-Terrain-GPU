@@ -1,6 +1,10 @@
-基于Unity-Procedural-Voxel-Terrain优化的版本 删除所有CPU的Jobs体素生成 改为GPU生成体素然后cpu只管构建网格 在克莱因群分形生成下 加速了10倍以上 让我实现了分形自由
-Todo
-GPU只回传体素数据 使用体素生成贪婪碰撞体 这样就不需要回传网格了 直接使用Graphics.DrawProceduralIndirect在gpu上渲染区块 
+# Unity 程序化体素地形（优化版）
+
+## 概述
+这是 **Unity-Procedural-Voxel-Terrain** 的优化版本，完全 **移除了 CPU Jobs 体素生成**，改为 **GPU 计算生成体素**，CPU 仅负责 **网格构建**。在 **克莱因群分形生成** 下，性能提升 **10 倍以上**，实现了真正的分形自由。
+
+## 待办事项
+- **GPU 只回传体素数据，使用体素生成贪婪碰撞体，从而无需回传网格，并直接使用 `Graphics.DrawProceduralIndirect` 在 GPU 上渲染区块**
 
 # Unity-Procedural-Voxel-Terrain
 
