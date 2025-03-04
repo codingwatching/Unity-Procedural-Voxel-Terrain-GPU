@@ -64,7 +64,7 @@ public class GPUVoxelData : System.IDisposable
         if (simplifyingMethod == VoxelMeshBuilder.SimplifyingMethod.GPUCulling) yield break;
 
         // 创建 NativeArray 接收 GPU 读回数据，使用 Persistent 分配保证内存稳定
-        NativeArray<int> nativeData = new NativeArray<int>(numVoxels, Allocator.Persistent);
+        NativeArray<Voxel> nativeData = new NativeArray<Voxel>(numVoxels, Allocator.Persistent);
         _asyncVoxelBuffer.StartReadbackNonAlloc(ref nativeData, numVoxels);
 
         // 等待 GPU 计算及读回完成
@@ -72,14 +72,13 @@ public class GPUVoxelData : System.IDisposable
             yield return null;
         _asyncVoxelBuffer.EndReadback();
 
-        // 批量内存拷贝：要求 Voxel 为 blittable（例如仅含一个 int 字段）
         CopyNativeDataToManaged(voxels, nativeData, numVoxels);
 
         nativeData.Dispose();
         yield break;
     }
 
-    private static unsafe void CopyNativeDataToManaged(Voxel[] voxels, NativeArray<int> nativeData, int numVoxels)
+    private static unsafe void CopyNativeDataToManaged(Voxel[] voxels, NativeArray<Voxel> nativeData, int numVoxels)
     {
         fixed (Voxel* dest = voxels)
         {
