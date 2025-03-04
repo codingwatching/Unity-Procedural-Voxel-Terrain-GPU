@@ -12,7 +12,7 @@ public partial class Chunk : MonoBehaviour
     TerrainGenerator generator;
     Vector3Int chunkPosition;
     Vector3Int chunkSize;
-    
+
     bool initialized;
     bool dirty;
     bool argent;
@@ -29,6 +29,9 @@ public partial class Chunk : MonoBehaviour
     GPUVoxelData voxelData;
     VoxelMeshBuilder.NativeMeshData meshData;
 
+    // 缓存的顶点布局参数（不会每次更新时改变）
+    VertexAttributeDescriptor[] cachedVertexAttributes;
+
     public bool Dirty => dirty;
     public bool Updating => meshUpdator != null;
     public bool Initialized => initialized;
@@ -39,7 +42,7 @@ public partial class Chunk : MonoBehaviour
         meshFilter = GetComponent<MeshFilter>();
         meshRenderer = GetComponent<MeshRenderer>();
         meshCollider = GetComponent<MeshCollider>();
-        mesh = new Mesh {indexFormat = IndexFormat.UInt32};
+        mesh = new Mesh { indexFormat = IndexFormat.UInt32 };
         CanUpdate = () => true;
     }
 
@@ -54,7 +57,7 @@ public partial class Chunk : MonoBehaviour
     {
         meshFilter.mesh = mesh;
     }
-    
+
     public void Init(Vector3Int position, TerrainGenerator parent)
     {
         chunkPosition = position;
@@ -63,13 +66,20 @@ public partial class Chunk : MonoBehaviour
         meshRenderer.material = generator.ChunkMaterial;
         chunkSize = generator.ChunkSize;
 
+        cachedVertexAttributes = new VertexAttributeDescriptor[]
+        {
+            new VertexAttributeDescriptor(VertexAttribute.Position, VertexAttributeFormat.Float32, 3),
+            new VertexAttributeDescriptor(VertexAttribute.Normal, VertexAttributeFormat.Float32, 3),
+            new VertexAttributeDescriptor(VertexAttribute.TexCoord0, VertexAttributeFormat.Float32, 4),
+        };
+
         StartCoroutine(nameof(InitUpdator));
     }
 
     IEnumerator InitUpdator()
     {
         int numVoxels = chunkSize.x * chunkSize.y * chunkSize.z;
-        voxels =  new Voxel[numVoxels];
+        voxels = new Voxel[numVoxels];
         voxelData = new GPUVoxelData(VoxelUtil.ToInt3(chunkSize));
         yield return voxelData.Generate(voxels, VoxelUtil.ToInt3(chunkPosition), VoxelUtil.ToInt3(chunkSize), generator.voxelComputeShader, generator.SimplifyingMethod);
         dirty = true;
@@ -80,7 +90,7 @@ public partial class Chunk : MonoBehaviour
     {
         if (!initialized)
             return;
-        
+
         if (Updating)
             return;
 
@@ -90,7 +100,7 @@ public partial class Chunk : MonoBehaviour
         if (CanUpdate == null || !CanUpdate())
             return;
 
-        if (generator.SimplifyingMethod ==  VoxelMeshBuilder.SimplifyingMethod.GPUCulling)
+        if (generator.SimplifyingMethod == VoxelMeshBuilder.SimplifyingMethod.GPUCulling)
             meshUpdator = StartCoroutine(nameof(UpdateGPUMesh));
         else
             meshUpdator = StartCoroutine(nameof(UpdateMesh));
@@ -98,42 +108,45 @@ public partial class Chunk : MonoBehaviour
 
     IEnumerator UpdateMesh()
     {
-        if(Updating)
+        if (Updating)
             yield break;
 
         if (!generator.CanUpdate)
             yield break;
 
         generator.UpdatingChunks++;
-        
-        //int3 chunkSizeInt3 = VoxelUtil.ToInt3(chunkSize);
 
-        //List<Voxel[]> neighborVoxels = generator.GetNeighborVoxels(chunkPosition, 1);
-        
         meshData?.Dispose();
         meshData = new VoxelMeshBuilder.NativeMeshData(VoxelUtil.ToInt3(chunkSize));
         yield return meshData.ScheduleMeshingJob(voxels, VoxelUtil.ToInt3(chunkSize), generator.SimplifyingMethod, argent);
-        
-        meshData.GetMeshInformation(out int verticeSize, out int indicesSize);
-        
-        if (verticeSize > 0 && indicesSize > 0)
+
+        meshData.GetMeshInformation(out int vertexCount, out int indexCount);
+
+        if (vertexCount > 0 && indexCount > 0)
         {
             mesh.Clear();
-            mesh.SetVertices(meshData.nativeVertices, 0, verticeSize);
-            mesh.SetNormals(meshData.nativeNormals, 0, verticeSize);
-            mesh.SetColors(meshData.nativeColors, 0, verticeSize);
-            mesh.SetUVs(0, meshData.nativeUVs, 0, verticeSize);
-            mesh.SetIndices(meshData.nativeIndices, 0, indicesSize, MeshTopology.Triangles, 0);
 
-            mesh.RecalculateNormals();
+            mesh.SetVertexBufferParams(vertexCount, cachedVertexAttributes);
+            mesh.SetIndexBufferParams(indexCount, IndexFormat.UInt32);
+            // 直接上传更新的 GPUVertex 数据（实际生成的顶点数可能小于最大缓存数）
+            mesh.SetVertexBufferData(meshData.nativeVertices, 0, 0, vertexCount, 0, MeshUpdateFlags.DontRecalculateBounds);
+
+            // 上传索引数据
+            mesh.SetIndexBufferData(meshData.nativeIndices, 0, 0, indexCount, MeshUpdateFlags.DontRecalculateBounds);
+
+            // 更新子网格描述，告知实际使用的索引数量
+            SubMeshDescriptor subMeshDescriptor = new SubMeshDescriptor(0, indexCount, MeshTopology.Triangles);
+            mesh.SetSubMesh(0, subMeshDescriptor, MeshUpdateFlags.DontRecalculateBounds);
+
+            // 仅重新计算包围盒，避免重复计算法线
             mesh.RecalculateBounds();
-            
-            if(argent)
+
+            if (argent)
                 SetSharedMesh(mesh);
             else
                 VoxelColliderBuilder.Instance.Enqueue(this, mesh);
         }
-        
+
         meshData.Dispose();
         dirty = false;
         argent = false;
@@ -154,7 +167,7 @@ public partial class Chunk : MonoBehaviour
             voxel = Voxel.Empty;
             return false;
         }
-        
+
         if (!VoxelUtil.BoundaryCheck(gridPosition, chunkSize))
         {
             voxel = Voxel.Empty;
@@ -167,13 +180,14 @@ public partial class Chunk : MonoBehaviour
 
     public bool SetVoxel(Vector3Int gridPosition, Voxel.VoxelType type)
     {
-        if (generator.SimplifyingMethod == VoxelMeshBuilder.SimplifyingMethod.GPUCulling) return SetGPUVoxel(gridPosition, type);
+        if (generator.SimplifyingMethod == VoxelMeshBuilder.SimplifyingMethod.GPUCulling)
+            return SetGPUVoxel(gridPosition, type);
 
         if (!initialized)
         {
             return false;
         }
-        
+
         if (!VoxelUtil.BoundaryCheck(gridPosition, chunkSize))
         {
             return false;

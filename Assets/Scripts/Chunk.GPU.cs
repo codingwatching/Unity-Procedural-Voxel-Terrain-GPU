@@ -48,13 +48,7 @@ public partial class Chunk
                 yield return null;
             gpuMeshData.indexBuffer.EndReadback();
 
-            // 设置 Mesh 顶点和索引数据
-            mesh.SetVertexBufferParams(vertexCount, new VertexAttributeDescriptor[]
-            {
-            new VertexAttributeDescriptor(VertexAttribute.Position, VertexAttributeFormat.Float32, 3),
-            new VertexAttributeDescriptor(VertexAttribute.Normal, VertexAttributeFormat.Float32, 3),
-            new VertexAttributeDescriptor(VertexAttribute.TexCoord0, VertexAttributeFormat.Float32, 4),
-            });
+            mesh.SetVertexBufferParams(vertexCount, cachedVertexAttributes);
             mesh.SetIndexBufferParams(indexCount, IndexFormat.UInt32);
 
             mesh.SetVertexBufferData(vertexNative, 0, 0, vertexCount, 0, MeshUpdateFlags.DontRecalculateBounds);
