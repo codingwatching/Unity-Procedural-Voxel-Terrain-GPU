@@ -264,9 +264,10 @@ MonoBehaviour:
   chunkSize: {x: 16, y: 256, z: 16}
   chunkSpawnSize: {x: 12, y: 2}
   chunkMaterial: {fileID: 2100000, guid: 0fbb6114864c2014b87fc493434a98af, type: 2}
-  maxGenerateChunksInFrame: 3
+  maxGenerateChunksInFrame: 8
   simplifyingMethod: 0
-  voxelComputeShader: {fileID: 7200000, guid: 3cbebfa7cd358fd4c9f3d4e18c9fb401, type: 3}
+  voxelComputeShader: {fileID: 7200000, guid: e7dc96f6d2e619c4c98e33a6544e95d6, type: 3}
+  meshComputeShader: {fileID: 7200000, guid: 48172e83ac3482848ad4ccc7bd412158, type: 3}
 --- !u!1 &1273372012
 GameObject:
   m_ObjectHideFlags: 0

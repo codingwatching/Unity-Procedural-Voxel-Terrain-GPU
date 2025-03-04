@@ -1,0 +1,150 @@
+#pragma kernel ClearCounter
+#pragma kernel CSMain
+
+// 结构体定义，与 C# 侧 GPUVertex 保持一致
+struct GPUVertex
+{
+    float3 position;
+    float3 normal;
+    float4 uv;
+};
+
+// 缓冲区定义
+RWStructuredBuffer<uint> counterBuffer;    // 单元素计数器缓冲区
+StructuredBuffer<int> voxelBuffer;           // 体素数据缓冲区（0 表示空气，其余为实心）
+RWStructuredBuffer<GPUVertex> vertexBuffer;  // 输出顶点数据
+RWStructuredBuffer<uint> indexBuffer;        // 输出索引数据
+
+// 参数设置
+int3 chunkPosition;
+int3 chunkSize;
+int2 _AtlasSize;
+
+// 常量数组：使用与 CPU 版一致的顺序和定义
+
+// 方向：右、左、上、下、前、后
+static const int3 VoxelDirectionOffsets[6] = {
+    int3(1, 0, 0),    // right
+    int3(-1, 0, 0),   // left
+    int3(0, 1, 0),    // top
+    int3(0, -1, 0),   // bottom
+    int3(0, 0, 1),    // front
+    int3(0, 0, -1)    // back
+};
+
+// 立方体 8 个顶点
+static const float3 CubeVertices[8] = {
+    float3(0, 0, 0),
+    float3(1, 0, 0),
+    float3(1, 0, 1),
+    float3(0, 0, 1),
+    float3(0, 1, 0),
+    float3(1, 1, 0),
+    float3(1, 1, 1),
+    float3(0, 1, 1)
+};
+
+// 每个面 4 个顶点的索引映射，按照 CPU 版 CubeFaces
+static const int CubeFaces[24] = {
+    1, 2, 5, 6, // right
+    0, 3, 4, 7, // left
+    4, 5, 7, 6, // top
+    0, 1, 3, 2, // bottom
+    3, 2, 7, 6, // front
+    0, 1, 4, 5  // back
+};
+
+// 基础 UV
+static const float2 CubeUVs[4] = {
+    float2(0, 0),
+    float2(1, 0),
+    float2(0, 1),
+    float2(1, 1)
+};
+
+// 每个面 6 个索引，按照 CPU 版定义
+static const int CubeIndices[36] = {
+    0, 3, 1, 0, 2, 3,       // face right
+    1, 3, 0, 3, 2, 0,       // face left
+    0, 3, 1, 0, 2, 3,       // face top
+    1, 3, 0, 3, 2, 0,       // face bottom
+    1, 3, 0, 3, 2, 0,       // face front
+    0, 3, 1, 0, 2, 3        // face back
+};
+
+//
+// 内核 ClearCounter：清零计数器
+//
+[numthreads(1, 1, 1)]
+void ClearCounter(uint3 id : SV_DispatchThreadID)
+{
+    counterBuffer[0] = 0;
+}
+
+//
+// 内核 CSMain：遍历体素，生成可见面对应的顶点和索引数据
+//
+[numthreads(4,4,4)]
+void CSMain(uint3 id : SV_DispatchThreadID)
+{
+    int voxelIndex = id.z + id.y * chunkSize.z + id.x * (chunkSize.y * chunkSize.z);
+    int voxelType = voxelBuffer[voxelIndex];
+    // 假设 0 为空气
+    if (voxelType == 0)
+        return;
+
+    // 遍历六个方向（顺序：右、左、上、下、前、后）
+    for (int face = 0; face < 6; face++)
+    {
+        int3 neighborPos = int3(id.x, id.y, id.z) + VoxelDirectionOffsets[face];
+        bool faceVisible = false;
+        if (neighborPos.x < 0 || neighborPos.y < 0 || neighborPos.z < 0 || neighborPos.x >= chunkSize.x || neighborPos.y >= chunkSize.y || neighborPos.z >= chunkSize.z)
+        {
+            faceVisible = true;
+        }
+        else
+        {
+            int neighborIndex = neighborPos.x * (chunkSize.y * chunkSize.z) + neighborPos.y * chunkSize.z + neighborPos.z;
+            int neighborValue = voxelBuffer[neighborIndex];
+
+            // 修改为和 CPU 版一致的判断
+            faceVisible = (neighborValue == 0);
+        }
+
+        if (!faceVisible)
+            continue;
+
+        // 原子性增加计数器，获得当前面索引
+        uint faceIndex;
+        InterlockedAdd(counterBuffer[0], 1, faceIndex);
+        uint vertexOffset = faceIndex * 4;
+        uint indexOffset = faceIndex * 6;
+
+        // 生成四个顶点数据
+        [unroll]
+        for (uint i = 0; i < 4; i++)
+        {
+            GPUVertex v;
+            // 根据 CPU 版：取 CubeFaces 数组中对应的顶点索引
+            int faceVertexIndex = CubeFaces[face * 4 + i];
+            float3 localPos = CubeVertices[faceVertexIndex];
+            // 计算世界坐标：体素位置 + chunk 偏移 + 立方体局部顶点坐标
+            v.position = float3(id.x, id.y, id.z) + localPos;
+            // 法线使用与 CPU 版一致的方向
+            v.normal = float3(VoxelDirectionOffsets[face]);
+            // 计算 UV：atlas索引 = voxelType * 6 + face
+            int atlasIndex = voxelType * 6 + face;
+            int atlasX = atlasIndex % _AtlasSize.x;
+            int atlasY = atlasIndex / _AtlasSize.x;
+            v.uv = float4(CubeUVs[i], atlasX, atlasY);
+            vertexBuffer[vertexOffset + i] = v;
+        }
+
+        // 写入索引数据，使用 CPU 版 CubeIndices 数组
+        [unroll]
+        for (uint i = 0; i < 6; i++)
+        {
+            indexBuffer[indexOffset + i] = CubeIndices[face * 6 + i] + vertexOffset;
+        }
+    }
+}

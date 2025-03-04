@@ -7,7 +7,7 @@ using UnityEngine.Rendering;
 [RequireComponent(typeof(MeshRenderer))]
 [RequireComponent(typeof(MeshFilter))]
 [RequireComponent(typeof(MeshCollider))]
-public class Chunk : MonoBehaviour
+public partial class Chunk : MonoBehaviour
 {
     TerrainGenerator generator;
     Vector3Int chunkPosition;
@@ -71,7 +71,7 @@ public class Chunk : MonoBehaviour
         int numVoxels = chunkSize.x * chunkSize.y * chunkSize.z;
         voxels =  new Voxel[numVoxels];
         voxelData = new GPUVoxelData(VoxelUtil.ToInt3(chunkSize));
-        yield return voxelData.Generate(voxels, VoxelUtil.ToInt3(chunkPosition), VoxelUtil.ToInt3(chunkSize), generator.voxelComputeShader);
+        yield return voxelData.Generate(voxels, VoxelUtil.ToInt3(chunkPosition), VoxelUtil.ToInt3(chunkSize), generator.voxelComputeShader, generator.SimplifyingMethod);
         dirty = true;
         initialized = true;
     }
@@ -90,7 +90,10 @@ public class Chunk : MonoBehaviour
         if (CanUpdate == null || !CanUpdate())
             return;
 
-        meshUpdator = StartCoroutine(nameof(UpdateMesh));
+        if (generator.SimplifyingMethod ==  VoxelMeshBuilder.SimplifyingMethod.GPUCulling)
+            meshUpdator = StartCoroutine(nameof(UpdateGPUMesh));
+        else
+            meshUpdator = StartCoroutine(nameof(UpdateMesh));
     }
 
     IEnumerator UpdateMesh()
@@ -164,6 +167,8 @@ public class Chunk : MonoBehaviour
 
     public bool SetVoxel(Vector3Int gridPosition, Voxel.VoxelType type)
     {
+        if (generator.SimplifyingMethod == VoxelMeshBuilder.SimplifyingMethod.GPUCulling) return SetGPUVoxel(gridPosition, type);
+
         if (!initialized)
         {
             return false;

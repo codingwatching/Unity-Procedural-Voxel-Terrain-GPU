@@ -11,7 +11,7 @@ public class TerrainGenerator : Singleton<TerrainGenerator>
     /// 必须是8的倍数对应CS的线程数
     /// </summary>
     [SerializeField] Vector3Int chunkSize = Vector3Int.one * 32;
-    [SerializeField] Vector2Int chunkSpawnSize = Vector2Int.one * 3;
+    [SerializeField] Vector2Int chunkSpawnSize = Vector2Int.one;
     [SerializeField] Material chunkMaterial;
     [SerializeField] int maxGenerateChunksInFrame = 5;
     [SerializeField] VoxelMeshBuilder.SimplifyingMethod simplifyingMethod;
@@ -27,6 +27,7 @@ public class TerrainGenerator : Singleton<TerrainGenerator>
     FastPriorityQueue<ChunkNode> generateChunkQueue = new FastPriorityQueue<ChunkNode>(100000);
     int updatingChunks;
     public ComputeShader voxelComputeShader;
+    public ComputeShader meshComputeShader;
 
     public Vector3Int ChunkSize => chunkSize;
     public Material ChunkMaterial => chunkMaterial;

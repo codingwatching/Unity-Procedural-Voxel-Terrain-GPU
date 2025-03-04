@@ -23,7 +23,8 @@ namespace OptIn.Voxel
         {
             Culling,
             GreedyOnlyHeight,
-            Greedy
+            Greedy,
+            GPUCulling,
         };
 
         public class NativeMeshData
@@ -43,13 +44,13 @@ namespace OptIn.Voxel
                 int maxVertices = 12 * numVoxels;
                 int maxIndices = 18 * numVoxels;
                 
-                nativeVoxels = new NativeArray<Voxel>(numVoxels, Allocator.TempJob, NativeArrayOptions.UninitializedMemory);
-                nativeVertices = new NativeArray<float3>(maxVertices, Allocator.TempJob, NativeArrayOptions.UninitializedMemory);
-                nativeNormals = new NativeArray<float3>(maxVertices, Allocator.TempJob, NativeArrayOptions.UninitializedMemory);
-                nativeUVs = new NativeArray<float4>(maxVertices, Allocator.TempJob, NativeArrayOptions.UninitializedMemory);
-                nativeColors = new NativeArray<Color>(maxVertices, Allocator.TempJob, NativeArrayOptions.UninitializedMemory);
-                nativeIndices = new NativeArray<int>(maxIndices, Allocator.TempJob, NativeArrayOptions.UninitializedMemory);
-                counter = new NativeCounter(Allocator.TempJob);
+                nativeVoxels = new NativeArray<Voxel>(numVoxels, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+                nativeVertices = new NativeArray<float3>(maxVertices, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+                nativeNormals = new NativeArray<float3>(maxVertices, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+                nativeUVs = new NativeArray<float4>(maxVertices, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+                nativeColors = new NativeArray<Color>(maxVertices, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+                nativeIndices = new NativeArray<int>(maxIndices, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+                counter = new NativeCounter(Allocator.Persistent);
             }
 
             ~NativeMeshData()
@@ -167,49 +168,6 @@ namespace OptIn.Voxel
 
                 jobHandle = voxelMeshingOnlyHeightJob.Schedule();
                 JobHandle.ScheduleBatchedJobs();
-            }
-        }
-
-        [BurstCompile]
-        struct VoxelCullingParallelJob : IJobParallelFor
-        {
-            [ReadOnly] public NativeArray<Voxel> voxels;
-            [ReadOnly] public int3 chunkSize;
-
-            [NativeDisableParallelForRestriction] [WriteOnly]
-            public NativeArray<float3> vertices;
-
-            [NativeDisableParallelForRestriction] [WriteOnly]
-            public NativeArray<float3> normals;
-
-            [NativeDisableParallelForRestriction] [WriteOnly]
-            public NativeArray<float4> uvs;
-            
-            [NativeDisableParallelForRestriction] [WriteOnly]
-            public NativeArray<int> indices;
-
-            [NativeDisableParallelForRestriction] [WriteOnly]
-            public NativeArray<Color> colors;
-
-            [WriteOnly] public NativeCounter.Concurrent counter;
-
-            public void Execute(int index)
-            {
-                int3 gridPosition = VoxelUtil.To3DIndex(index, chunkSize);
-                Voxel voxel = voxels[index];
-
-                if (voxel.data == Voxel.VoxelType.Air)
-                    return;
-
-                for (int direction = 0; direction < 6; direction++)
-                {
-                    int3 neighborPosition = gridPosition + VoxelUtil.VoxelDirectionOffsets[direction];
-
-                    if (TransparencyCheck(voxels, neighborPosition, chunkSize))
-                        continue;
-
-                    AddQuadByDirection(direction, voxel.data, 1.0f, 1.0f, gridPosition, counter.Increment(), vertices, normals, uvs, colors, indices);
-                }
             }
         }
         
