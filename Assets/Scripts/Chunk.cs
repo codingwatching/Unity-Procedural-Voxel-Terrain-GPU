@@ -51,6 +51,12 @@ public partial class Chunk : MonoBehaviour
         voxelData?.Dispose();
         meshData?.jobHandle.Complete();
         meshData?.Dispose();
+
+        if (mesh != null)
+        {
+            Destroy(mesh);
+            mesh = null;
+        }
     }
 
     void Start()
