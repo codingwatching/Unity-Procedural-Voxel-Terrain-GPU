@@ -29,7 +29,7 @@ public partial class Chunk : MonoBehaviour
     GPUVoxelData voxelData;
     VoxelMeshBuilder.NativeMeshData meshData;
 
-    // 缓存的顶点布局参数（不会每次更新时改变）
+    // 顶点属性缓存
     VertexAttributeDescriptor[] cachedVertexAttributes;
 
     public bool Dirty => dirty;
@@ -131,17 +131,12 @@ public partial class Chunk : MonoBehaviour
 
             mesh.SetVertexBufferParams(vertexCount, cachedVertexAttributes);
             mesh.SetIndexBufferParams(indexCount, IndexFormat.UInt32);
-            // 直接上传更新的 GPUVertex 数据（实际生成的顶点数可能小于最大缓存数）
             mesh.SetVertexBufferData(meshData.nativeVertices, 0, 0, vertexCount, 0, MeshUpdateFlags.DontRecalculateBounds);
-
-            // 上传索引数据
             mesh.SetIndexBufferData(meshData.nativeIndices, 0, 0, indexCount, MeshUpdateFlags.DontRecalculateBounds);
 
-            // 更新子网格描述，告知实际使用的索引数量
             SubMeshDescriptor subMeshDescriptor = new SubMeshDescriptor(0, indexCount, MeshTopology.Triangles);
             mesh.SetSubMesh(0, subMeshDescriptor, MeshUpdateFlags.DontRecalculateBounds);
 
-            // 仅重新计算包围盒，避免重复计算法线
             mesh.RecalculateBounds();
 
             if (argent)
@@ -181,7 +176,7 @@ public partial class Chunk : MonoBehaviour
         return true;
     }
 
-    public bool SetVoxel(Vector3Int gridPosition, Voxel.VoxelType type)
+    public bool SetVoxel(Vector3Int gridPosition, ushort type)
     {
         if (!initialized)
         {
@@ -193,7 +188,7 @@ public partial class Chunk : MonoBehaviour
             return false;
         }
 
-        voxels[VoxelUtil.To1DIndex(gridPosition, chunkSize)].data = type;
+        //voxels[VoxelUtil.To1DIndex(gridPosition, chunkSize)].data = type;
         dirty = true;
         argent = true;
         return true;

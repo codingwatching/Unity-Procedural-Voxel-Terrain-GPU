@@ -20,7 +20,7 @@ namespace OptIn.Voxel
                 Physics.BakeMesh(meshIds[index], false);
             }
         }
-        
+
         struct MeshNode
         {
             public Chunk chunk;
@@ -33,7 +33,7 @@ namespace OptIn.Voxel
 
         public void Enqueue(Chunk chunk, Mesh mesh)
         {
-            meshes.Add(new MeshNode {chunk = chunk, mesh = mesh});
+            meshes.Add(new MeshNode { chunk = chunk, mesh = mesh });
         }
 
         void Start()
@@ -44,7 +44,7 @@ namespace OptIn.Voxel
         void OnDestroy()
         {
             jobHandle.Complete();
-        
+
             if (meshIds.IsCreated)
                 meshIds.Dispose();
         }
@@ -60,14 +60,14 @@ namespace OptIn.Voxel
                     yield return null;
                     continue;
                 }
-                
+
                 if (counter < 4 && meshes.Count < 5)
                 {
                     counter++;
                     yield return null;
                     continue;
                 }
-                
+
                 meshIds = new NativeArray<int>(meshes.Count, Allocator.TempJob);
 
                 for (int i = 0; i < meshes.Count; ++i)
@@ -75,7 +75,7 @@ namespace OptIn.Voxel
                     meshIds[i] = meshes[i].mesh.GetInstanceID();
                 }
 
-                BakeJob bakeJob = new BakeJob {meshIds = meshIds};
+                BakeJob bakeJob = new BakeJob { meshIds = meshIds };
                 jobHandle = bakeJob.Schedule(meshIds.Length, 32);
                 JobHandle.ScheduleBatchedJobs();
                 int frameCount = 1;
@@ -91,7 +91,7 @@ namespace OptIn.Voxel
                 {
                     meshes[i].chunk.SetSharedMesh(meshes[i].mesh);
                 }
-            
+
                 meshes.Clear();
                 counter = 0;
                 yield return null;

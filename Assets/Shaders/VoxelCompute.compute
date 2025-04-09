@@ -4,27 +4,31 @@
 
 #include "Ruri_Common_FractalLibrary.hlsl"
 
-struct Voxel
+// 定义体素数据结构，32位打包存储：
+// 低16位：texId， 接着8位：shapeId， 最后8位：metadata
+struct VoxelData
 {
-    uint type;
+    uint packed;
 };
-RWStructuredBuffer<Voxel> asyncVoxelBuffer;
+RWStructuredBuffer<VoxelData> asyncVoxelBuffer;
 
-// CPU传入
+// CPU传入参数
 int3 gridPosition;
 int newVoxelType; 
 
 int3 chunkPosition;
 uint3 chunkSize;
 
-// 硬编码
+// 硬编码参数，与 CPU 端体素生成保持一致
 float4 _QuaternionJuliaC;
 float _QuaternionJuliaPosW;
 
-// 综合分形距离估计函数
+// 综合分形距离估计函数（未做修改）
+// 此处仅使用 KleinianDE 函数（从 MandelbrotDE 获得的缩放影响）
+// 你可以根据需要启用其他 DE 函数
 float CombinedFractalDE(float3 fractalPos, float4 minFractalPos, float4 maxFractalPos)
 {
-    float minDistance = 99999;
+    float minDistance = 99999.0;
 
     // 2D 曼德博集合 DE
     float2 mandelbrotPos;
@@ -52,61 +56,65 @@ float CombinedFractalDE(float3 fractalPos, float4 minFractalPos, float4 maxFract
     float3 mengerPos;
     float mengerDistance = MengerSpongeDE(fractalPos, mengerPos);
     
-    // 谢尔宾斯基地形 DE
+    // Sierpinski DE
     float3 sierpinskiPos;
     float sierpinskiDistance = SierpinskiDE(fractalPos, sierpinskiPos);
     
-    // 克莱因群 DE
+    // 克莱因群 DE（使用 MandelbrotPos 计算缩放影响）
     float3 kleinianPos;
-    //float kleinianDistance = KleinianDE(fractalPos, minFractalPos, maxFractalPos, kleinianPos);
     float kleinianDistance = KleinianDE(fractalPos * sqrt(length(mandelbrotPos)), minFractalPos, maxFractalPos, kleinianPos);
     
-    //minDistance = min(minDistance, quaternionJuliaDistance);
-    //minDistance = min(minDistance, mandelbrotDistance);
+    // 本示例仅使用克莱因群距离来决定体素状态，可根据需要叠加其他函数结果
     minDistance = min(minDistance, kleinianDistance);
-    //minDistance = min(minDistance, juliaDistance);
-    //minDistance = min(minDistance, amazingBoxDistance);
-    //minDistance = min(minDistance, mandelbulbDistance);
-    //minDistance = min(minDistance, mengerDistance);
-    //minDistance = min(minDistance, sierpinskiDistance);
 
     return minDistance;
 }
 
-//---------------------------------------------------
-// 主计算函数
-//---------------------------------------------------
+// 主体计算函数，每个线程组 4×4×4 个线程
 [numthreads(4,4,4)]
 void CSMain (uint3 id : SV_DispatchThreadID)
 {
-    // 使用行主序计算唯一索引
+    // 计算行主序索引
     int index = id.z + id.y * chunkSize.z + id.x * (chunkSize.y * chunkSize.z);
+
+    // 计算世界坐标（与 CPU 同步使用整数坐标）
+    int3 worldPos = int3(id) + (chunkPosition * chunkSize);
     
-    // 计算世界坐标（与原逻辑保持一致）
-    int3 worldPos = int3(id) + (chunkPosition * chunkSize); 
-    // 旋转90度并缩放100倍匹配Unity坐标系
-    float3 fractalPos = float3(worldPos.x, -worldPos.z, worldPos.y) * 0.01;
-    
-    // 硬编码克莱因群位置
+    // GPU 端坐标转换：采用与 CPU 相同缩放，不做旋转
+    float3 fractalPos = float3(worldPos) / 90.0;
+
+    // 固定区域参数（与 CPU 保持一致）
     float4 minFractalPos = float4(-0.3252, -0.7862, -0.0948, 0.678);
     float4 maxFractalPos = float4( 0.3457,  1.0218,  1.2215, 0.9);
-    float dist = CombinedFractalDE(fractalPos, minFractalPos, maxFractalPos);
-    
-    int voxelType = 0; // 空气方块
-    if (dist < 0.0)
-        voxelType = 1; // 土块 
 
-    asyncVoxelBuffer[index].type = voxelType;
+    // 对于 Marching Cubes，需要连续的密度场——将距离反转得到密度
+    float density = 0.05 - CombinedFractalDE(fractalPos, minFractalPos, maxFractalPos);
+
+    // 根据密度正负决定纹理——密度大于0时认为是固体（texId设为1），否则为空气
+    uint texId = (density > 0.0) ? 1u : 0u;
+    // 为了使用 Marching Cubes 体素生成，所有体素采用等值（Isosurface）形状，shapeId固定为0
+    uint shapeId = 0u;
+
+    // 限幅到[-1, 1]后映射为0~255之间的值，以便通过 Density = (metadata-128)/127还原
+    density = clamp(density, -1.0, 1.0);
+    uint metadata = (uint)(density * 127.0 + 128.0);
+    
+    // 打包成 32 位数据：低16位存 texId，接下来的8位存 shapeId，再接下来的8位存 metadata
+    asyncVoxelBuffer[index].packed = (metadata << 24) | (shapeId << 16) | (texId & 0xFFFF);
 }
 
-// 每个线程组只包含 1 个线程
+// 设置单个体素函数，每个线程组1个线程
 [numthreads(1,1,1)]
 void SetVoxel (uint3 id : SV_DispatchThreadID)
 {
-    // 计算 1D 下标
     int index = gridPosition.z +
                 gridPosition.y * chunkSize.z +
-                gridPosition.x * chunkSize.y * chunkSize.z;
-
-    asyncVoxelBuffer[index].type = newVoxelType;
+                gridPosition.x * (chunkSize.y * chunkSize.z);
+    
+    // 根据传入 newVoxelType，设置固体或空气，并构造打包数据
+    // 固体：density取1（对应metadata = 1*127 + 128 = 255）; 空气：density取-1（对应metadata = -127 + 128 = 1）
+    uint texId = (newVoxelType == 1) ? 1u : 0u;
+    uint shapeId = 0u;
+    uint metadata = (newVoxelType == 1) ? (uint)(1.0 * 127.0 + 128.0) : (uint)((-1.0) * 127.0 + 128.0);
+    asyncVoxelBuffer[index].packed = (metadata << 24) | (shapeId << 16) | (texId & 0xFFFF);
 }
