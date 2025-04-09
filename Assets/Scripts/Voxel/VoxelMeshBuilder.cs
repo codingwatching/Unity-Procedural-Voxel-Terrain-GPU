@@ -164,6 +164,15 @@ namespace OptIn.Voxel
                     }
                 }
             }
+
+            // 【修改】如果未手动构造 index 列表，则根据顶点顺序自动生成索引
+            if (vbuf.Indices.Count == 0)
+            {
+                for (int idx = 0; idx < vbuf.Vertices.Count; idx++)
+                {
+                    vbuf.Indices.Add(idx);
+                }
+            }
         }
 
         // 辅助方法
