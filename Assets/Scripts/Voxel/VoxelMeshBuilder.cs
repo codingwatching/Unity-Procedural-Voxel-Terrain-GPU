@@ -1,5 +1,6 @@
+// VoxelMeshBuilder.cs
 using System.Collections;
-using OptIn.Voxel.Utils;
+using OptIn.Voxel;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
@@ -165,7 +166,6 @@ namespace OptIn.Voxel
                 }
             }
 
-            // 【修改】如果未手动构造 index 列表，则根据顶点顺序自动生成索引
             if (vbuf.Indices.Count == 0)
             {
                 for (int idx = 0; idx < vbuf.Vertices.Count; idx++)
@@ -176,11 +176,13 @@ namespace OptIn.Voxel
         }
 
         // 辅助方法
+        // 修改处：对超出范围的采样进行 clamp 修正，保证各区块网格连续
         static Voxel GetVoxel(NativeArray<Voxel> voxels, int3 pos, int3 chunkSize)
         {
-            if (pos.x < 0 || pos.y < 0 || pos.z < 0 || pos.x >= chunkSize.x || pos.y >= chunkSize.y || pos.z >= chunkSize.z)
-                return Voxel.Empty;
-            int index = pos.z + pos.y * chunkSize.z + pos.x * chunkSize.y * chunkSize.z;
+            pos.x = pos.x < 0 ? 0 : (pos.x >= chunkSize.x ? chunkSize.x - 1 : pos.x);
+            pos.y = pos.y < 0 ? 0 : (pos.y >= chunkSize.y ? chunkSize.y - 1 : pos.y);
+            pos.z = pos.z < 0 ? 0 : (pos.z >= chunkSize.z ? chunkSize.z - 1 : pos.z);
+            int index = pos.z + pos.y * chunkSize.z + pos.x * (chunkSize.y * chunkSize.z);
             return voxels[index];
         }
 
