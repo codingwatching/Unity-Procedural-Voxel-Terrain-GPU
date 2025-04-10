@@ -1,4 +1,3 @@
-// VoxelMeshBuilder.cs
 using System.Collections;
 using OptIn.Voxel;
 using Unity.Burst;
@@ -11,6 +10,112 @@ namespace OptIn.Voxel
 {
     public static class VoxelMeshBuilder
     {
+
+        private static float[] CUBE_POS = new float[108]
+        {
+            0f, 0f, 1f, 0f, 1f, 1f, 0f, 1f, 0f, 0f,
+            0f, 1f, 0f, 1f, 0f, 0f, 0f, 0f, 1f, 0f,
+            0f, 1f, 1f, 0f, 1f, 1f, 1f, 1f, 0f, 0f,
+            1f, 1f, 1f, 1f, 0f, 1f, 0f, 0f, 1f, 0f,
+            0f, 0f, 1f, 0f, 0f, 0f, 0f, 1f, 1f, 0f,
+            0f, 1f, 0f, 1f, 0f, 1f, 1f, 1f, 1f, 1f,
+            1f, 1f, 0f, 0f, 1f, 1f, 1f, 1f, 0f, 0f,
+            1f, 0f, 0f, 0f, 0f, 0f, 1f, 0f, 1f, 1f,
+            0f, 0f, 0f, 0f, 1f, 1f, 0f, 1f, 0f, 0f,
+            1f, 0f, 1f, 1f, 1f, 1f, 0f, 1f, 1f, 1f,
+            0f, 1f, 0f, 1f, 1f, 0f, 0f, 1f
+        };
+
+        private static float[] CUBE_UV = new float[72]
+        {
+            1f, 0f, 1f, 1f, 0f, 1f, 1f, 0f, 0f, 1f,
+            0f, 0f, 1f, 0f, 1f, 1f, 0f, 1f, 1f, 0f,
+            0f, 1f, 0f, 0f, 1f, 0f, 1f, 1f, 0f, 1f,
+            1f, 0f, 0f, 1f, 0f, 0f, 1f, 0f, 1f, 1f,
+            0f, 1f, 1f, 0f, 0f, 1f, 0f, 0f, 1f, 0f,
+            1f, 1f, 0f, 1f, 1f, 0f, 0f, 1f, 0f, 0f,
+            1f, 0f, 1f, 1f, 0f, 1f, 1f, 0f, 0f, 1f,
+            0f, 0f
+        };
+
+        private static int[] CUBE_NORM = new int[108]
+        {
+            -1, 0, 0, -1, 0, 0, -1, 0, 0, -1,
+            0, 0, -1, 0, 0, -1, 0, 0, 1, 0,
+            0, 1, 0, 0, 1, 0, 0, 1, 0, 0,
+            1, 0, 0, 1, 0, 0, 0, -1, 0, 0,
+            -1, 0, 0, -1, 0, 0, -1, 0, 0, -1,
+            0, 0, -1, 0, 0, 1, 0, 0, 1, 0,
+            0, 1, 0, 0, 1, 0, 0, 1, 0, 0,
+            1, 0, 0, 0, -1, 0, 0, -1, 0, 0,
+            -1, 0, 0, -1, 0, 0, -1, 0, 0, -1,
+            0, 0, 1, 0, 0, 1, 0, 0, 1, 0,
+            0, 1, 0, 0, 1, 0, 0, 1
+        };
+
+        public static int3[] SN_VERT = new int3[8]
+        {
+            new int3(0, 0, 0),
+            new int3(0, 0, 1),
+            new int3(0, 1, 0),
+            new int3(0, 1, 1),
+            new int3(1, 0, 0),
+            new int3(1, 0, 1),
+            new int3(1, 1, 0),
+            new int3(1, 1, 1)
+        };
+
+        private static int[,] EDGE = new int[12, 2]
+        {
+            { 0, 4 },
+            { 1, 5 },
+            { 2, 6 },
+            { 3, 7 },
+            { 5, 7 },
+            { 1, 3 },
+            { 4, 6 },
+            { 0, 2 },
+            { 4, 5 },
+            { 0, 1 },
+            { 6, 7 },
+            { 2, 3 }
+        };
+
+        private static int3[] AXES = new int3[3]
+        {
+            new int3(1, 0, 0),
+            new int3(0, 1, 0),
+            new int3(0, 0, 1)
+        };
+
+        private static int3[,] ADJACENT = new int3[3, 6]
+        {
+            {
+                new int3(0, 0, 0),
+                new int3(0, -1, 0),
+                new int3(0, -1, -1),
+                new int3(0, -1, -1),
+                new int3(0, 0, -1),
+                new int3(0, 0, 0)
+            },
+            {
+                new int3(0, 0, 0),
+                new int3(0, 0, -1),
+                new int3(-1, 0, -1),
+                new int3(-1, 0, -1),
+                new int3(-1, 0, 0),
+                new int3(0, 0, 0)
+            },
+            {
+                new int3(0, 0, 0),
+                new int3(-1, 0, 0),
+                new int3(-1, -1, 0),
+                new int3(-1, -1, 0),
+                new int3(0, -1, 0),
+                new int3(0, 0, 0)
+            }
+        };
+
         public static void InitializeShaderParameter()
         {
             Shader.SetGlobalInt("_AtlasX", AtlasSize.x);
@@ -102,40 +207,8 @@ namespace OptIn.Voxel
         // Marching Cubes 体素生成实现，提取自 B 中核心算法
         public static void MarchingCubesGenerateMesh(VertexBuffer vbuf, NativeArray<Voxel> voxels, int3 chunkSize)
         {
-            int3[] AXES = new int3[3]
-            {
-                new int3(1, 0, 0),
-                new int3(0, 1, 0),
-                new int3(0, 0, 1)
-            };
-            int3[,] ADJACENT = new int3[3, 6]
-            {
-                { new int3(0, 0, 0), new int3(0, -1, 0), new int3(0, -1, -1), new int3(0, -1, -1), new int3(0, 0, -1), new int3(0, 0, 0) },
-                { new int3(0, 0, 0), new int3(0, 0, -1), new int3(-1, 0, -1), new int3(-1, 0, -1), new int3(-1, 0, 0), new int3(0, 0, 0) },
-                { new int3(0, 0, 0), new int3(-1, 0, 0), new int3(-1, -1, 0), new int3(-1, -1, 0), new int3(0, -1, 0), new int3(0, 0, 0) }
-            };
-            int3[] SN_VERT = new int3[8]
-            {
-                new int3(0,0,0), new int3(0,0,1), new int3(0,1,0), new int3(0,1,1),
-                new int3(1,0,0), new int3(1,0,1), new int3(1,1,0), new int3(1,1,1)
-            };
-            int[,] EDGE = new int[12, 2]
-            {
-                { 0, 4 },
-                { 1, 5 },
-                { 2, 6 },
-                { 3, 7 },
-                { 5, 7 },
-                { 1, 3 },
-                { 4, 6 },
-                { 0, 2 },
-                { 4, 5 },
-                { 0, 1 },
-                { 6, 7 },
-                { 2, 3 }
-            };
-
-            for (int i = 0; i < chunkSize.x; i++)
+            // 修改循环范围：只遍历内部完整的体素单元（i,j,k取值为 0~chunkSize-2），避免边界处因邻区块未采样而产生不连续
+            for (int i = 0; i < chunkSize.x ; i++)
             {
                 for (int j = 0; j < chunkSize.y; j++)
                 {
@@ -176,7 +249,6 @@ namespace OptIn.Voxel
         }
 
         // 辅助方法
-        // 修改处：对超出范围的采样进行 clamp 修正，保证各区块网格连续
         static Voxel GetVoxel(NativeArray<Voxel> voxels, int3 pos, int3 chunkSize)
         {
             pos.x = pos.x < 0 ? 0 : (pos.x >= chunkSize.x ? chunkSize.x - 1 : pos.x);

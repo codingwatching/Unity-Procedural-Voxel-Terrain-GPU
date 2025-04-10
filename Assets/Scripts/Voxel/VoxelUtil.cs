@@ -12,7 +12,12 @@ namespace OptIn.Voxel
 
         public static int To1DIndex(int3 index, int3 chunkSize)
         {
-            return index.z + index.y * chunkSize.z + index.x * chunkSize.y * chunkSize.z;
+            // 如果区?尺寸正好? 16×16×16，?采用位移方式加速?算
+            if (chunkSize.x == 16 && chunkSize.y == 16 && chunkSize.z == 16)
+            {
+                return (index.x << 8) | (index.y << 4) | index.z;
+            }
+            return index.z + index.y * chunkSize.z + index.x * (chunkSize.y * chunkSize.z);
         }
 
         public static int To1DIndex(Vector3Int index, Vector3Int chunkSize)
@@ -42,7 +47,7 @@ namespace OptIn.Voxel
 
         public static Vector3 ChunkToWorld(Vector3Int chunkPosition, Vector3Int chunkSize)
         {
-            return chunkPosition * chunkSize;
+            return Vector3.Scale(chunkPosition, chunkSize);
         }
 
         public static Vector3 GridToWorld(Vector3Int gridPosition, Vector3Int chunkPosition, Vector3Int chunkSize)

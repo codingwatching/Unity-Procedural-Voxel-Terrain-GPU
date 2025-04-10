@@ -158,6 +158,7 @@ public partial class Chunk : MonoBehaviour
         meshCollider.sharedMesh = bakedMesh;
     }
 
+    // 修改后的 GetVoxel：支持超出本区块时查询邻区块的体素数据
     public bool GetVoxel(Vector3Int gridPosition, out Voxel voxel)
     {
         if (!initialized)
@@ -165,33 +166,53 @@ public partial class Chunk : MonoBehaviour
             voxel = Voxel.Empty;
             return false;
         }
-
-        if (!VoxelUtil.BoundaryCheck(gridPosition, chunkSize))
+        if (VoxelUtil.BoundaryCheck(gridPosition, chunkSize))
         {
+            voxel = voxels[VoxelUtil.To1DIndex(gridPosition, chunkSize)];
+            return true;
+        }
+        else
+        {
+            // 将超出边界的网格坐标转换为世界坐标，再查询对应的区块
+            Vector3 worldPos = VoxelUtil.GridToWorld(gridPosition, chunkPosition, chunkSize);
+            if (TerrainGenerator.Instance.GetChunk(worldPos, out Chunk neighborChunk))
+            {
+                Vector3Int neighborGridPos = VoxelUtil.WorldToGrid(worldPos, VoxelUtil.WorldToChunk(worldPos, chunkSize), chunkSize);
+                return neighborChunk.GetVoxel(neighborGridPos, out voxel);
+            }
             voxel = Voxel.Empty;
             return false;
         }
-
-        voxel = voxels[VoxelUtil.To1DIndex(gridPosition, chunkSize)];
-        return true;
     }
 
+    // 修改后的 SetVoxel：支持超出本区块时更新邻区块的体素数据
     public bool SetVoxel(Vector3Int gridPosition, ushort type)
     {
         if (!initialized)
+            return false;
+        if (VoxelUtil.BoundaryCheck(gridPosition, chunkSize))
         {
+            int index = VoxelUtil.To1DIndex(gridPosition, chunkSize);
+            Voxel voxel = voxels[index];
+            voxel.texId = type;
+            voxel.shapeId = 0;
+            // 当 type==1 时认为为固体，density 取正数；否则为空气，density 取负数
+            voxel.Density = (type == 1) ? 1f : -1f;
+            voxels[index] = voxel;
+            dirty = true;
+            argent = true;
+            return true;
+        }
+        else
+        {
+            Vector3 worldPos = VoxelUtil.GridToWorld(gridPosition, chunkPosition, chunkSize);
+            if (TerrainGenerator.Instance.GetChunk(worldPos, out Chunk neighborChunk))
+            {
+                Vector3Int neighborGridPos = VoxelUtil.WorldToGrid(worldPos, VoxelUtil.WorldToChunk(worldPos, chunkSize), chunkSize);
+                return neighborChunk.SetVoxel(neighborGridPos, type);
+            }
             return false;
         }
-
-        if (!VoxelUtil.BoundaryCheck(gridPosition, chunkSize))
-        {
-            return false;
-        }
-
-        //voxels[VoxelUtil.To1DIndex(gridPosition, chunkSize)].data = type;
-        dirty = true;
-        argent = true;
-        return true;
     }
 
     public void NeighborChunkIsChanged()
