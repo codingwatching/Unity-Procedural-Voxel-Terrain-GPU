@@ -32,7 +32,7 @@ float SphereSDF(float3 pos, float3 center, float radius)
 // 你可以根据需要启用其他 DE 函数
 float CombinedFractalDE(float3 fractalPos, float4 minFractalPos, float4 maxFractalPos)
 {
-    float minDistance = 99999.0;
+    float minDistance = 99999;
 
     // 2D 曼德博集合 DE
     float2 mandelbrotPos;
@@ -60,19 +60,23 @@ float CombinedFractalDE(float3 fractalPos, float4 minFractalPos, float4 maxFract
     float3 mengerPos;
     float mengerDistance = MengerSpongeDE(fractalPos, mengerPos);
     
-    // Sierpinski DE
+    // 谢尔宾斯基地形 DE
     float3 sierpinskiPos;
     float sierpinskiDistance = SierpinskiDE(fractalPos, sierpinskiPos);
     
-    // 克莱因群 DE（使用 MandelbrotPos 计算缩放影响）
+    // 克莱因群 DE
     float3 kleinianPos;
+    //float kleinianDistance = KleinianDE(fractalPos, minFractalPos, maxFractalPos, kleinianPos);
     float kleinianDistance = KleinianDE(fractalPos * sqrt(length(mandelbrotPos)), minFractalPos, maxFractalPos, kleinianPos);
     
-    float3 spherePos;
-    float sphereDistance = SphereSDF(fractalPos, 0, 0.5);
-    
-    // 本示例仅使用克莱因群距离来决定体素状态，可根据需要叠加其他函数结果
-    minDistance = min(minDistance, sphereDistance);
+    //minDistance = min(minDistance, quaternionJuliaDistance);
+    //minDistance = min(minDistance, mandelbrotDistance);
+    minDistance = min(minDistance, kleinianDistance);
+    //minDistance = min(minDistance, juliaDistance);
+    //minDistance = min(minDistance, amazingBoxDistance);
+    //minDistance = min(minDistance, mandelbulbDistance);
+    //minDistance = min(minDistance, mengerDistance);
+    //minDistance = min(minDistance, sierpinskiDistance);
 
     return minDistance;
 }
@@ -86,9 +90,8 @@ void CSMain (uint3 id : SV_DispatchThreadID)
 
     // 计算世界坐标（与 CPU 同步使用整数坐标）
     int3 worldPos = int3(id) + (chunkPosition * chunkSize);
-    
-    // GPU 端坐标转换：采用与 CPU 相同缩放，不做旋转
-    float3 fractalPos = float3(worldPos) / 90.0;
+    // 旋转90度并缩放100倍匹配Unity坐标系
+    float3 fractalPos = float3(worldPos.x, -worldPos.z, worldPos.y) * 0.01;
 
     // 固定区域参数（与 CPU 保持一致）
     float4 minFractalPos = float4(-0.3252, -0.7862, -0.0948, 0.678);
