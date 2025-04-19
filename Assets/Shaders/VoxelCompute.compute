@@ -98,7 +98,7 @@ void CSMain (uint3 id : SV_DispatchThreadID)
     float4 maxFractalPos = float4( 0.3457,  1.0218,  1.2215, 0.9);
 
     // 对于 Marching Cubes，需要连续的密度场——将距离反转得到密度
-    float density = -CombinedFractalDE(fractalPos, minFractalPos, maxFractalPos);
+    float density = CombinedFractalDE(fractalPos, minFractalPos, maxFractalPos);
 
     // 根据密度正负决定纹理——密度大于0时认为是固体（texId设为1），否则为空气
     uint texId = (density > 0.0) ? 1u : 0u;
