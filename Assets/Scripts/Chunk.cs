@@ -109,6 +109,7 @@ public partial class Chunk : MonoBehaviour
         meshUpdator = StartCoroutine(nameof(UpdateMesh));
     }
 
+
     IEnumerator UpdateMesh()
     {
         if (Updating)
@@ -121,8 +122,16 @@ public partial class Chunk : MonoBehaviour
 
         meshData?.Dispose();
         meshData = new VoxelMeshBuilder.NativeMeshData(VoxelUtil.ToInt3(chunkSize));
-        yield return meshData.ScheduleMeshingJob(voxels, VoxelUtil.ToInt3(chunkSize), generator.SimplifyingMethod, argent);
 
+        /* 这里把 “this” 传进去，供网格构建阶段跨 Chunk 取体素，消除接缝 */
+        yield return meshData.ScheduleMeshingJob(
+            voxels,          // 当前块本地体素数组
+            this,            // 新增：当前 Chunk 引用
+            VoxelUtil.ToInt3(chunkSize),
+            generator.SimplifyingMethod,
+            argent);
+
+        /* ....................（下面原逻辑完全保持）.................... */
         meshData.GetMeshInformation(out int vertexCount, out int indexCount);
 
         if (vertexCount > 0 && indexCount > 0)

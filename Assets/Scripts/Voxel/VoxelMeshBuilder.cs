@@ -116,6 +116,11 @@ namespace OptIn.Voxel
             }
         };
 
+        /// <summary>
+        ///   用于从任意栅格坐标读取 <see cref="Voxel"/> 的委托。
+        ///   若坐标落在当前块外部，则自动查询相邻 Chunk，保证边界顶点一致。
+        /// </summary>
+        private delegate Voxel GetVoxelAt(int3 gridPos);
         public static void InitializeShaderParameter()
         {
             Shader.SetGlobalInt("_AtlasX", AtlasSize.x);
@@ -156,27 +161,54 @@ namespace OptIn.Voxel
 
             public void Dispose()
             {
-                if (nativeVoxels.IsCreated)
-                    nativeVoxels.Dispose();
-
-                if (nativeVertices.IsCreated)
-                    nativeVertices.Dispose();
-
-                if (nativeIndices.IsCreated)
-                    nativeIndices.Dispose();
+                if (nativeVoxels.IsCreated) nativeVoxels.Dispose();
+                if (nativeVertices.IsCreated) nativeVertices.Dispose();
+                if (nativeIndices.IsCreated) nativeIndices.Dispose();
             }
 
-            public IEnumerator ScheduleMeshingJob(Voxel[] voxels, int3 chunkSize, SimplifyingMethod method, bool argent = false)
+            /// <summary>
+            ///  根据本块及其邻居体素生成网格数据（Dual‑Contouring）。
+            ///  ⚠️ 现在需要 <paramref name="ownerChunk"/> 参与，以解决边界裂缝问题。
+            /// </summary>
+            public IEnumerator ScheduleMeshingJob(
+                Voxel[] selfVoxels,
+                Chunk ownerChunk,
+                int3 chunkSize,
+                SimplifyingMethod method,
+                bool argent = false)
             {
-                nativeVoxels.CopyFrom(voxels);
-                VertexBuffer vbuf = new VertexBuffer();
-                MarchingCubesGenerateMesh(vbuf, nativeVoxels, chunkSize);
+                /* 1. 把当前块体素复制进 NativeArray（Burst‑Job / GC‑free） */
+                nativeVoxels.CopyFrom(selfVoxels);
 
+                /* 2. 定义跨 Chunk 读取体素的委托 —— 优先从本块缓存取，越界时向生成器查询 */
+                GetVoxelAt voxelAt = gridPos =>
+                {
+                    /* 在本块范围内 */
+                    if (VoxelUtil.BoundaryCheck(gridPos, chunkSize))
+                    {
+                        int idx = VoxelUtil.To1DIndex(gridPos, chunkSize);
+                        return nativeVoxels[idx];
+                    }
+
+                    /* 越界 → 折算成世界坐标，再委托 TerrainGenerator 查询邻居块 */
+                    Vector3 worldPos = ownerChunk.transform.position +
+                                       new Vector3(gridPos.x, gridPos.y, gridPos.z);
+
+                    return TerrainGenerator.Instance.GetVoxel(worldPos, out var v) ? v : Voxel.Empty;
+                };
+
+                /* 3. 生成网格（核心算法与 B 版统一） */
+                VertexBuffer vbuf = new VertexBuffer();
+                MarchingCubesGenerateMesh(vbuf, voxelAt, chunkSize);
+
+                /* 4. 转存到 NativeArray 供 Mesh API 使用 */
                 int vCount = vbuf.Vertices.Count;
-                int iCount = vbuf.Indices.Count;
+                int iCount = vbuf.Indices.Count == 0 ? vCount : vbuf.Indices.Count;
+
                 if (nativeVertices.IsCreated) nativeVertices.Dispose();
-                nativeVertices = new NativeArray<GPUVertex>(vCount, Allocator.Persistent);
                 if (nativeIndices.IsCreated) nativeIndices.Dispose();
+
+                nativeVertices = new NativeArray<GPUVertex>(vCount, Allocator.Persistent);
                 nativeIndices = new NativeArray<int>(iCount, Allocator.Persistent);
 
                 for (int i = 0; i < vCount; i++)
@@ -189,64 +221,71 @@ namespace OptIn.Voxel
                         uv = new Vector4(v.uv.x, v.uv.y, 0f, 0f)
                     };
                 }
-                for (int i = 0; i < iCount; i++)
+
+                if (vbuf.Indices.Count == 0)
                 {
-                    nativeIndices[i] = vbuf.Indices[i];
+                    for (int i = 0; i < iCount; i++)
+                        nativeIndices[i] = i;
+                }
+                else
+                {
+                    for (int i = 0; i < iCount; i++)
+                        nativeIndices[i] = vbuf.Indices[i];
                 }
 
+                /* 这里不再启动 JobHandle，直接同步拷贝即可 */
                 yield return null;
             }
 
-            public void GetMeshInformation(out int verticeSize, out int indicesSize)
+            public void GetMeshInformation(out int vertexSize, out int indexSize)
             {
-                verticeSize = nativeVertices.Length;
-                indicesSize = nativeIndices.Length;
+                vertexSize = nativeVertices.Length;
+                indexSize = nativeIndices.Length;
             }
         }
 
-        // Marching Cubes 体素生成实现，提取自 B 中核心算法
-        public static void MarchingCubesGenerateMesh(VertexBuffer vbuf, NativeArray<Voxel> voxels, int3 chunkSize)
+        /* ======================= Marching‑Cubes / Dual‑Contouring ======================= */
+
+        private static void MarchingCubesGenerateMesh(VertexBuffer vbuf,
+                                                      GetVoxelAt voxelAt,
+                                                      int3 chunkSize)
         {
-            // 修改循环范围：只遍历内部完整的体素单元（i,j,k取值为 0~chunkSize-2），避免边界处因邻区块未采样而产生不连续
-            for (int i = 0; i < chunkSize.x ; i++)
-            {
-                for (int j = 0; j < chunkSize.y; j++)
-                {
-                    for (int k = 0; k < chunkSize.z; k++)
+            for (int x = 0; x < chunkSize.x; x++)
+                for (int y = 0; y < chunkSize.y; y++)
+                    for (int z = 0; z < chunkSize.z; z++)
                     {
-                        int3 pos = new int3(i, j, k);
-                        Voxel c = GetVoxel(voxels, pos, chunkSize);
-                        for (int l = 0; l < 3; l++)
+                        int3 pos = new int3(x, y, z);
+                        Voxel center = voxelAt(pos);
+
+                        for (int axis = 0; axis < 3; axis++)
                         {
-                            int3 neighborPos = pos + AXES[l];
-                            Voxel neighbor = GetVoxel(voxels, neighborPos, chunkSize);
-                            if (!SignChanged(c, neighbor))
+                            Voxel neighbor = voxelAt(pos + AXES[axis]);
+                            if (!SignChanged(center, neighbor))
                                 continue;
-                            for (int m = 0; m < 6; m++)
+
+                            for (int f = 0; f < 6; f++)
                             {
-                                int faceIndex = (!IsDensityValid(c)) ? (5 - m) : m;
-                                int3 cellPos = pos + ADJACENT[l, faceIndex];
-                                FeatureResult fr = ComputeFeaturePointAndNormal(voxels, cellPos, chunkSize, EDGE, SN_VERT);
+                                int faceIdx = (!IsDensityValid(center)) ? (5 - f) : f;
+                                int3 cellPos = pos + ADJACENT[axis, faceIdx];
+
+                                FeatureResult fr = ComputeFeaturePointAndNormal(voxelAt, cellPos);
                                 float3 fp = fr.featurePoint;
                                 if (!IsFinite(fp))
                                     fp = new float3(0f, -99f, 0f);
-                                float3 vertexPos = cellPos + fp;
-                                int texId = DetermineTexId(voxels, cellPos, chunkSize, SN_VERT);
-                                vbuf.PushVertex(vertexPos, new UnityEngine.Vector2(texId, -1f), fr.normal);
+
+                                int texId = DetermineTexId(voxelAt, cellPos);
+                                vbuf.PushVertex(cellPos + fp,
+                                    new Vector2(texId, -1f),
+                                    fr.normal);
                             }
                         }
                     }
-                }
-            }
 
+            /* 若未写入索引则顺序输出 */
             if (vbuf.Indices.Count == 0)
-            {
-                for (int idx = 0; idx < vbuf.Vertices.Count; idx++)
-                {
-                    vbuf.Indices.Add(idx);
-                }
-            }
+                for (int i = 0; i < vbuf.Vertices.Count; i++) vbuf.Indices.Add(i);
         }
+
 
         // 辅助方法
         static Voxel GetVoxel(NativeArray<Voxel> voxels, int3 pos, int3 chunkSize)
@@ -273,54 +312,62 @@ namespace OptIn.Voxel
             return math.all(math.isfinite(v));
         }
 
-        struct FeatureResult
+        private struct FeatureResult
         {
             public float3 featurePoint;
             public float3 normal;
         }
 
-        static FeatureResult ComputeFeaturePointAndNormal(NativeArray<Voxel> voxels, int3 pos, int3 chunkSize, int[,] EDGE, int3[] SN_VERT)
+        private static FeatureResult ComputeFeaturePointAndNormal(
+            GetVoxelAt voxelAt, int3 pos)
         {
-            float gx = GetVoxel(voxels, pos + new int3(1, 0, 0), chunkSize).Density - GetVoxel(voxels, pos - new int3(1, 0, 0), chunkSize).Density;
-            float gy = GetVoxel(voxels, pos + new int3(0, 1, 0), chunkSize).Density - GetVoxel(voxels, pos - new int3(0, 1, 0), chunkSize).Density;
-            float gz = GetVoxel(voxels, pos + new int3(0, 0, 1), chunkSize).Density - GetVoxel(voxels, pos - new int3(0, 0, 1), chunkSize).Density;
+            /* 计算梯度 */
+            float gx = voxelAt(pos + new int3(1, 0, 0)).Density - voxelAt(pos - new int3(1, 0, 0)).Density;
+            float gy = voxelAt(pos + new int3(0, 1, 0)).Density - voxelAt(pos - new int3(0, 1, 0)).Density;
+            float gz = voxelAt(pos + new int3(0, 0, 1)).Density - voxelAt(pos - new int3(0, 0, 1)).Density;
             float3 grad = new float3(gx, gy, gz) / 2f;
             float3 normal = math.normalize(-grad);
 
-            float3 sum = new float3(0f, 0f, 0f);
+            /* 走遍 12 条边求交点平均 */
+            float3 sum = float3.zero;
             int count = 0;
+
             for (int i = 0; i < 12; i++)
             {
                 int3 v0 = SN_VERT[EDGE[i, 0]];
                 int3 v1 = SN_VERT[EDGE[i, 1]];
-                Voxel c0 = GetVoxel(voxels, pos + v0, chunkSize);
-                Voxel c1 = GetVoxel(voxels, pos + v1, chunkSize);
-                if (SignChanged(c0, c1))
+                Voxel a = voxelAt(pos + v0);
+                Voxel b = voxelAt(pos + v1);
+
+                if (SignChanged(a, b))
                 {
-                    float t = math.unlerp(c0.Density, c1.Density, 0f);
-                    float3 fp = math.lerp(v0, v1, t);
-                    sum += fp;
+                    float t = math.unlerp(a.Density, b.Density, 0f);
+                    float3 p = math.lerp(v0, v1, t);
+                    sum += p;
                     count++;
                 }
             }
-            float3 featurePoint = (count > 0) ? (sum / count) : new float3(0f, 0f, 0f);
-            return new FeatureResult { featurePoint = featurePoint, normal = normal };
+
+            float3 feature = (count > 0) ? (sum / count) : float3.zero;
+            return new FeatureResult { featurePoint = feature, normal = normal };
         }
 
-        static int DetermineTexId(NativeArray<Voxel> voxels, int3 pos, int3 chunkSize, int3[] SN_VERT)
+        private static int DetermineTexId(GetVoxelAt voxelAt, int3 pos)
         {
             float minDensity = float.PositiveInfinity;
-            int selectedTex = 0;
+            int tex = 0;
+
             for (int i = 0; i < SN_VERT.Length; i++)
             {
-                Voxel v = GetVoxel(voxels, pos + SN_VERT[i], chunkSize);
+                Voxel v = voxelAt(pos + SN_VERT[i]);
                 if (!v.IsTexNil() && !v.IsDensityNil() && v.Density < minDensity)
                 {
                     minDensity = v.Density;
-                    selectedTex = v.texId;
+                    tex = v.texId;
                 }
             }
-            return selectedTex;
+            return tex;
         }
+
     }
 }
