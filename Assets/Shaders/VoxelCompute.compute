@@ -64,6 +64,10 @@ float CombinedFractalDE(float3 fractalPos, float4 minFractalPos, float4 maxFract
     float3 sierpinskiPos;
     float sierpinskiDistance = SierpinskiDE(fractalPos, sierpinskiPos);
     
+    // 球形 DE
+    float3 spherePos;
+    float sphereDistance = SphereSDF(fractalPos, 0, 0.1);
+    
     // 克莱因群 DE
     float3 kleinianPos;
     //float kleinianDistance = KleinianDE(fractalPos, minFractalPos, maxFractalPos, kleinianPos);
@@ -79,6 +83,17 @@ float CombinedFractalDE(float3 fractalPos, float4 minFractalPos, float4 maxFract
     //minDistance = min(minDistance, sierpinskiDistance);
 
     return minDistance;
+}
+
+//--------------------------- SD → Density ---------------------------//
+float SignedDistanceToDensity(float sd)
+{
+    float  _densitySmoothFactor = 0.02;     // 越大曲面越“软”，锯齿更少；过大会失真，建议 0.02–0.1
+    float  _densityScale = 1;               // >1 让壳更薄，<1 让壳更厚
+    
+    float smoothFactor = max(_densitySmoothFactor, 1e-5);
+    sd *= _densityScale;
+    return sd / (abs(sd) + smoothFactor);     // 连续且 C¹
 }
 
 // 主体计算函数，每个线程组 4×4×4 个线程
@@ -98,15 +113,15 @@ void CSMain (uint3 id : SV_DispatchThreadID)
     float4 maxFractalPos = float4( 0.3457,  1.0218,  1.2215, 0.9);
 
     // 对于 Marching Cubes，需要连续的密度场——将距离反转得到密度
-    float density = CombinedFractalDE(fractalPos, minFractalPos, maxFractalPos);
+    float sd = CombinedFractalDE(fractalPos, minFractalPos, maxFractalPos);
+    float density = clamp(SignedDistanceToDensity(-sd), -1.0, 1.0);
 
     // 根据密度正负决定纹理——密度大于0时认为是固体（texId设为1），否则为空气
     uint texId = (density > 0.0) ? 1u : 0u;
     // 为了使用 Marching Cubes 体素生成，所有体素采用等值（Isosurface）形状，shapeId固定为0
     uint shapeId = 0u;
 
-    // 限幅到[-1, 1]后映射为0~255之间的值，以便通过 Density = (metadata-128)/127还原
-    density = clamp(density, -1.0, 1.0);
+    // 通过 Density = (metadata-128)/127还原
     uint metadata = (uint)(density * 127.0 + 128.0);
     
     // 打包成 32 位数据：低16位存 texId，接下来的8位存 shapeId，再接下来的8位存 metadata
