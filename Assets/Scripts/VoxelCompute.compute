@@ -71,12 +71,19 @@ float CombinedFractalDE(float3 fractalPos, float4 minFractalPos, float4 maxFract
 //---------------------------------------------------
 // Main compute function
 //---------------------------------------------------
-[numthreads(4, 4, 4)]
+[numthreads(8, 8, 8)]
 void CSMain(uint3 id : SV_DispatchThreadID)
 {
+    if (any(id >= chunkSize))
+        return; // 防止溢出（虽修复后 id<=35, chunk=34, 但保险）
     int index = id.z + id.y * chunkSize.z + id.x * (chunkSize.y * chunkSize.z);
     
-    int3 worldPos = int3(id) + (chunkPosition * chunkSize);
+    // Calculate world position based on logical size, with an offset for the padding.
+    // 'chunkSize' is the padded size (e.g., 34), so logical size is 'chunkSize - 2'.
+    // We offset the grid position by -1 to center the logical chunk correctly.
+    uint3 logicalChunkSize = chunkSize - 2;
+    int3 worldPos = (chunkPosition * (int3) logicalChunkSize) + int3(id) - 1;
+    
     float3 fractalPos = float3(worldPos.x, -worldPos.z, worldPos.y) * 0.01;
     
     float4 minFractalPos = float4(-0.3252, -0.7862, -0.0948, 0.678);
@@ -94,10 +101,10 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     if (fractalPos.x > 0)
     {
         voxelID = -1; // Block ID 1 (e.g., Dirt/Stone)
-        float density = clamp(-dist, -1.0, 1.0); 
+        float density = clamp(-dist, -1.0, 1.0);
         
         // 将 [-1, 1] 的密度映射到 [0, 255] 的 metadata
-        metadata = (uint)(density * 127.0 + 128.0);
+        metadata = (uint) (density * 127.0 + 128.0);
     }
 
     asyncVoxelBuffer[index].voxelID = voxelID;

@@ -46,7 +46,9 @@ public class GPUVoxelData : System.IDisposable
         computeShader.SetBuffer(kernel, "asyncVoxelBuffer", _asyncVoxelBuffer);
         computeShader.SetInts("chunkPosition", chunkPosition.x, chunkPosition.y, chunkPosition.z);
         computeShader.SetInts("chunkSize", newChunkSize.x, newChunkSize.y, newChunkSize.z);
-        computeShader.Dispatch(kernel, newChunkSize);
+        int3 threadGroupSize = new int3(8);  // 匹配 HLSL numthreads
+        int3 groups = (newChunkSize + threadGroupSize - 1) / threadGroupSize;  // ceil(34/4)=9
+        computeShader.Dispatch(kernel, groups.x, groups.y, groups.z);
 
         var nativeData = new NativeArray<Voxel>(numVoxels, Allocator.Persistent);
         _asyncVoxelBuffer.StartReadbackNonAlloc(ref nativeData, numVoxels);

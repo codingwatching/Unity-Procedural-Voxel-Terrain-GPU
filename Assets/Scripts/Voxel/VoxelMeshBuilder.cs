@@ -152,9 +152,10 @@ namespace OptIn.Voxel
 
             public void Execute()
             {
-                for (int x = 0; x < chunkSize.x; x++)
-                    for (int y = 0; y < chunkSize.y; y++)
-                        for (int z = 0; z < chunkSize.z; z++)
+                // Iterate over the logical/inner volume of the chunk data (from 1 to size-2)
+                for (int x = 1; x < chunkSize.x - 1; x++)
+                    for (int y = 1; y < chunkSize.y - 1; y++)
+                        for (int z = 1; z < chunkSize.z - 1; z++)
                         {
                             int3 gridPosition = new int3(x, y, z);
                             Voxel voxel = voxels[VoxelUtil.To1DIndex(gridPosition, chunkSize)];
@@ -164,9 +165,11 @@ namespace OptIn.Voxel
                             for (int direction = 0; direction < 6; direction++)
                             {
                                 int3 neighborPosition = gridPosition + VoxelUtil.VoxelDirectionOffsets[direction];
+                                // Neighbor check is now safe due to padding
                                 if (IsVoxelSolid(voxels, neighborPosition, chunkSize)) continue;
 
-                                AddQuadByDirection(direction, voxel.GetMaterialID(), 1.0f, 1.0f, gridPosition, counter.Increment(), vertices, indices);
+                                // Subtract 1 from gridPosition to move vertex from padded space to logical space
+                                AddQuadByDirection(direction, voxel.GetMaterialID(), 1.0f, 1.0f, gridPosition - 1, counter.Increment(), vertices, indices);
                             }
                         }
             }
@@ -221,70 +224,73 @@ namespace OptIn.Voxel
 
             public void Execute()
             {
-                for (int x = 0; x < chunkSize.x; x++)
-                    for (int y = 0; y < chunkSize.y; y++)
-                        for (int z = 0; z < chunkSize.z; z++)
+                // Iterate over all cells that could define an edge for the logical volume.
+                for (int x = 0; x < chunkSize.x - 1; x++)
+                    for (int y = 0; y < chunkSize.y - 1; y++)
+                        for (int z = 0; z < chunkSize.z - 1; z++)
                         {
                             var pos = new int3(x, y, z);
-                            var voxel = GetVoxelOrEmpty(pos);
 
-                            if (voxel.IsBlock)
+                            // --- Block Culling Logic within the Dual Contouring loop ---
+                            // We only generate block faces if the block itself is within the logical volume
+                            if (x > 0 && y > 0 && z > 0)
                             {
-                                // --- PATH 1: BLOCK VOXEL (保留之前的修复) ---
-                                for (int direction = 0; direction < 6; direction++)
+                                var voxel = GetVoxelOrEmpty(pos);
+                                if (voxel.IsBlock)
                                 {
-                                    Voxel neighborVoxel = GetVoxelOrEmpty(pos + VoxelUtil.VoxelDirectionOffsets[direction]);
-                                    if (!neighborVoxel.IsBlock)
+                                    for (int direction = 0; direction < 6; direction++)
                                     {
-                                        AddQuadByDirection(direction, voxel.GetMaterialID(), 1.0f, 1.0f, pos, counter.Increment(), vertices, indices);
+                                        Voxel neighborVoxel = GetVoxelOrEmpty(pos + VoxelUtil.VoxelDirectionOffsets[direction]);
+                                        if (!neighborVoxel.IsBlock)
+                                        {
+                                            AddQuadByDirection(direction, voxel.GetMaterialID(), 1.0f, 1.0f, pos - 1, counter.Increment(), vertices, indices);
+                                        }
                                     }
                                 }
                             }
-                            else // IsIsosurface
+
+                            // --- Smooth/Isosurface Logic ---
+                            for (int axis = 0; axis < 3; axis++)
                             {
-                                // --- PATH 2: SMOOTH VOXEL (包括空气) ---
-                                for (int axis = 0; axis < 3; axis++)
+                                var neighbor = GetVoxelOrEmpty(pos + VoxelUtil.DC_AXES[axis]);
+                                var voxel = GetVoxelOrEmpty(pos);
+
+                                // This condition now correctly handles only smooth-to-smooth transitions.
+                                // Block-to-smooth transitions are handled above, preventing double faces.
+                                if (voxel.IsIsosurface && neighbor.IsIsosurface && SignChanged(voxel, neighbor))
                                 {
-                                    var neighbor = GetVoxelOrEmpty(pos + VoxelUtil.DC_AXES[axis]);
+                                    int quadIndex = counter.Increment();
+                                    ushort materialId = voxel.Density > 0 ? voxel.GetMaterialID() : neighbor.GetMaterialID();
 
-                                    if (neighbor.IsIsosurface && SignChanged(voxel, neighbor))
+                                    for (int i = 0; i < 4; i++)
                                     {
-                                        int quadIndex = counter.Increment();
-                                        ushort materialId = voxel.Density > 0 ? voxel.GetMaterialID() : neighbor.GetMaterialID();
+                                        var cornerPos = pos + VoxelUtil.DC_ADJACENT[axis, i];
+                                        vertices[quadIndex * 4 + i] = new GPUVertex
+                                        {
+                                            position = CalculateFeaturePoint(cornerPos) - 1,
+                                            normal = CalculateGradient(cornerPos),
+                                            uv = new float4(0, 0, materialId, 0)
+                                        };
+                                    }
 
-                                        for (int i = 0; i < 4; i++)
-                                        {
-                                            var cornerPos = pos + VoxelUtil.DC_ADJACENT[axis, i];
-                                            vertices[quadIndex * 4 + i] = new GPUVertex
-                                            {
-                                                position = CalculateFeaturePoint(cornerPos),
-                                                normal = CalculateGradient(cornerPos), // 使用已修复的法线
-                                                uv = new float4(0, 0, materialId, 0)
-                                            };
-                                        }
-
-                                        int vertIndex = quadIndex * 4;
-                                        // BUG FIX 2: 根据密度正负动态决定绕序，确保所有面都朝外。
-                                        if (voxel.Density > 0)
-                                        {
-                                            // 当前体素是实体，邻居是空气，法线朝向邻居（正方向）
-                                            indices[quadIndex * 6 + 0] = vertIndex + 0;
-                                            indices[quadIndex * 6 + 1] = vertIndex + 1;
-                                            indices[quadIndex * 6 + 2] = vertIndex + 2;
-                                            indices[quadIndex * 6 + 3] = vertIndex + 0;
-                                            indices[quadIndex * 6 + 4] = vertIndex + 2;
-                                            indices[quadIndex * 6 + 5] = vertIndex + 3;
-                                        }
-                                        else
-                                        {
-                                            // 当前体素是空气，邻居是实体，法线朝向自己（负方向），需要翻转绕序
-                                            indices[quadIndex * 6 + 0] = vertIndex + 0;
-                                            indices[quadIndex * 6 + 1] = vertIndex + 2;
-                                            indices[quadIndex * 6 + 2] = vertIndex + 1;
-                                            indices[quadIndex * 6 + 3] = vertIndex + 0;
-                                            indices[quadIndex * 6 + 4] = vertIndex + 3;
-                                            indices[quadIndex * 6 + 5] = vertIndex + 2;
-                                        }
+                                    int vertIndex = quadIndex * 4;
+                                    if (voxel.Density > 0)
+                                    {
+                                        indices[quadIndex * 6 + 0] = vertIndex + 0;
+                                        indices[quadIndex * 6 + 1] = vertIndex + 1;
+                                        indices[quadIndex * 6 + 2] = vertIndex + 2;
+                                        indices[quadIndex * 6 + 3] = vertIndex + 0;
+                                        indices[quadIndex * 6 + 4] = vertIndex + 2;
+                                        indices[quadIndex * 6 + 5] = vertIndex + 3;
+                                    }
+                                    else
+                                    {
+                                        indices[quadIndex * 6 + 0] = vertIndex + 0;
+                                        indices[quadIndex * 6 + 1] = vertIndex + 2;
+                                        indices[quadIndex * 6 + 2] = vertIndex + 1;
+                                        indices[quadIndex * 6 + 3] = vertIndex + 0;
+                                        indices[quadIndex * 6 + 4] = vertIndex + 3;
+                                        indices[quadIndex * 6 + 5] = vertIndex + 2;
                                     }
                                 }
                             }
@@ -304,9 +310,10 @@ namespace OptIn.Voxel
             public void Execute()
             {
                 for (int direction = 0; direction < 6; direction++)
-                    for (int depth = 0; depth < chunkSize[VoxelUtil.DirectionAlignedZ[direction]]; depth++)
-                        for (int x = 0; x < chunkSize[VoxelUtil.DirectionAlignedX[direction]]; x++)
-                            for (int y = 0; y < chunkSize[VoxelUtil.DirectionAlignedY[direction]];)
+                    // Iterate over the logical/inner volume
+                    for (int depth = 1; depth < chunkSize[VoxelUtil.DirectionAlignedZ[direction]] - 1; depth++)
+                        for (int x = 1; x < chunkSize[VoxelUtil.DirectionAlignedX[direction]] - 1; x++)
+                            for (int y = 1; y < chunkSize[VoxelUtil.DirectionAlignedY[direction]] - 1;)
                             {
                                 int3 gridPosition = new int3 { [VoxelUtil.DirectionAlignedX[direction]] = x, [VoxelUtil.DirectionAlignedY[direction]] = y, [VoxelUtil.DirectionAlignedZ[direction]] = depth };
                                 Voxel voxel = voxels[VoxelUtil.To1DIndex(gridPosition, chunkSize)];
@@ -317,14 +324,14 @@ namespace OptIn.Voxel
                                 if (IsVoxelSolid(voxels, neighborPosition, chunkSize)) { y++; continue; }
 
                                 int height;
-                                for (height = 1; height + y < chunkSize[VoxelUtil.DirectionAlignedY[direction]]; height++)
+                                for (height = 1; height + y < chunkSize[VoxelUtil.DirectionAlignedY[direction]] - 1; height++)
                                 {
                                     int3 nextPosition = gridPosition;
                                     nextPosition[VoxelUtil.DirectionAlignedY[direction]] += height;
                                     Voxel nextVoxel = voxels[VoxelUtil.To1DIndex(nextPosition, chunkSize)];
                                     if (nextVoxel.voxelID != voxel.voxelID) break;
                                 }
-                                AddQuadByDirection(direction, voxel.GetMaterialID(), 1.0f, height, gridPosition, counter.Increment(), vertices, indices);
+                                AddQuadByDirection(direction, voxel.GetMaterialID(), 1.0f, height, gridPosition - 1, counter.Increment(), vertices, indices);
                                 y += height;
                             }
             }
@@ -345,11 +352,12 @@ namespace OptIn.Voxel
                 for (int direction = 0; direction < 6; direction++)
                 {
                     var hashMap = new NativeParallelHashMap<int3, Empty>(chunkSize[VoxelUtil.DirectionAlignedX[direction]] * chunkSize[VoxelUtil.DirectionAlignedY[direction]], Allocator.Temp);
-                    for (int depth = 0; depth < chunkSize[VoxelUtil.DirectionAlignedZ[direction]]; depth++)
+                    // Iterate over the logical/inner volume
+                    for (int depth = 1; depth < chunkSize[VoxelUtil.DirectionAlignedZ[direction]] - 1; depth++)
                     {
-                        for (int x = 0; x < chunkSize[VoxelUtil.DirectionAlignedX[direction]]; x++)
+                        for (int x = 1; x < chunkSize[VoxelUtil.DirectionAlignedX[direction]] - 1; x++)
                         {
-                            for (int y = 0; y < chunkSize[VoxelUtil.DirectionAlignedY[direction]];)
+                            for (int y = 1; y < chunkSize[VoxelUtil.DirectionAlignedY[direction]] - 1;)
                             {
                                 int3 gridPosition = new int3 { [VoxelUtil.DirectionAlignedX[direction]] = x, [VoxelUtil.DirectionAlignedY[direction]] = y, [VoxelUtil.DirectionAlignedZ[direction]] = depth };
                                 Voxel voxel = voxels[VoxelUtil.To1DIndex(gridPosition, chunkSize)];
@@ -361,7 +369,7 @@ namespace OptIn.Voxel
                                 hashMap.TryAdd(gridPosition, new Empty());
 
                                 int height;
-                                for (height = 1; height + y < chunkSize[VoxelUtil.DirectionAlignedY[direction]]; height++)
+                                for (height = 1; height + y < chunkSize[VoxelUtil.DirectionAlignedY[direction]] - 1; height++)
                                 {
                                     int3 nextPosition = gridPosition;
                                     nextPosition[VoxelUtil.DirectionAlignedY[direction]] += height;
@@ -372,7 +380,7 @@ namespace OptIn.Voxel
 
                                 bool isDone = false;
                                 int width;
-                                for (width = 1; width + x < chunkSize[VoxelUtil.DirectionAlignedX[direction]]; width++)
+                                for (width = 1; width + x < chunkSize[VoxelUtil.DirectionAlignedX[direction]] - 1; width++)
                                 {
                                     for (int dy = 0; dy < height; dy++)
                                     {
@@ -396,7 +404,7 @@ namespace OptIn.Voxel
                                     }
                                 }
 
-                                AddQuadByDirection(direction, voxel.GetMaterialID(), width, height, gridPosition, counter.Increment(), vertices, indices);
+                                AddQuadByDirection(direction, voxel.GetMaterialID(), width, height, gridPosition - 1, counter.Increment(), vertices, indices);
                                 y += height;
                             }
                         }

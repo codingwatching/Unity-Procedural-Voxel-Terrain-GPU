@@ -11,7 +11,8 @@ public partial class Chunk : MonoBehaviour
 {
     TerrainGenerator generator;
     Vector3Int chunkPosition;
-    Vector3Int chunkSize;
+    Vector3Int logicalChunkSize;
+    Vector3Int paddedChunkSize;
 
     bool initialized;
     bool dirty;
@@ -70,7 +71,9 @@ public partial class Chunk : MonoBehaviour
         generator = parent;
 
         meshRenderer.material = generator.ChunkMaterial;
-        chunkSize = generator.ChunkSize;
+        logicalChunkSize = generator.ChunkSize;
+        paddedChunkSize = logicalChunkSize + Vector3Int.one * 2;
+        transform.position = VoxelUtil.ChunkToWorld(chunkPosition, logicalChunkSize);
 
         cachedVertexAttributes = new VertexAttributeDescriptor[]
         {
@@ -84,11 +87,11 @@ public partial class Chunk : MonoBehaviour
 
     IEnumerator InitUpdator()
     {
-        int numVoxels = chunkSize.x * chunkSize.y * chunkSize.z;
+        int numVoxels = paddedChunkSize.x * paddedChunkSize.y * paddedChunkSize.z;
         voxels = new Voxel[numVoxels];
-        voxelData = new GPUVoxelData(VoxelUtil.ToInt3(chunkSize));
+        voxelData = new GPUVoxelData(VoxelUtil.ToInt3(paddedChunkSize));
         // 注意：此处的Compute Shader需要更新以匹配新的Voxel结构体布局才能正确生成密度数据。
-        yield return voxelData.Generate(voxels, VoxelUtil.ToInt3(chunkPosition), VoxelUtil.ToInt3(chunkSize), generator.voxelComputeShader, generator.SimplifyingMethod);
+        yield return voxelData.Generate(voxels, VoxelUtil.ToInt3(chunkPosition), VoxelUtil.ToInt3(paddedChunkSize), generator.voxelComputeShader, generator.SimplifyingMethod);
         dirty = true;
         initialized = true;
     }
@@ -121,8 +124,8 @@ public partial class Chunk : MonoBehaviour
         generator.UpdatingChunks++;
 
         meshData?.Dispose();
-        meshData = new VoxelMeshBuilder.NativeMeshData(VoxelUtil.ToInt3(chunkSize));
-        yield return meshData.ScheduleMeshingJob(voxels, VoxelUtil.ToInt3(chunkSize), generator.SimplifyingMethod, argent);
+        meshData = new VoxelMeshBuilder.NativeMeshData(VoxelUtil.ToInt3(paddedChunkSize));
+        yield return meshData.ScheduleMeshingJob(voxels, VoxelUtil.ToInt3(paddedChunkSize), generator.SimplifyingMethod, argent);
 
         meshData.GetMeshInformation(out int vertexCount, out int indexCount);
 
@@ -171,13 +174,15 @@ public partial class Chunk : MonoBehaviour
             return false;
         }
 
-        if (!VoxelUtil.BoundaryCheck(gridPosition, chunkSize))
+        Vector3Int arrayIndex = gridPosition + Vector3Int.one;
+
+        if (!VoxelUtil.BoundaryCheck(arrayIndex, paddedChunkSize))
         {
             voxel = Voxel.Empty;
             return false;
         }
 
-        voxel = voxels[VoxelUtil.To1DIndex(gridPosition, chunkSize)];
+        voxel = voxels[VoxelUtil.To1DIndex(arrayIndex, paddedChunkSize)];
         return true;
     }
 
@@ -188,12 +193,14 @@ public partial class Chunk : MonoBehaviour
             return false;
         }
 
-        if (!VoxelUtil.BoundaryCheck(gridPosition, chunkSize))
+        Vector3Int arrayIndex = gridPosition + Vector3Int.one;
+
+        if (!VoxelUtil.BoundaryCheck(arrayIndex, paddedChunkSize))
         {
             return false;
         }
 
-        voxels[VoxelUtil.To1DIndex(gridPosition, chunkSize)] = voxel;
+        voxels[VoxelUtil.To1DIndex(arrayIndex, paddedChunkSize)] = voxel;
         dirty = true;
         argent = true;
         return true;
@@ -207,15 +214,17 @@ public partial class Chunk : MonoBehaviour
 
     void OnDrawGizmos()
     {
+        if (logicalChunkSize == Vector3Int.zero) return;
+
         if (!initialized)
         {
             Gizmos.color = Color.yellow;
-            Gizmos.DrawWireCube(transform.position + new Vector3(chunkSize.x / 2f, chunkSize.y / 2f, chunkSize.z / 2f), chunkSize);
+            Gizmos.DrawWireCube(transform.position + (Vector3)logicalChunkSize / 2f, logicalChunkSize);
         }
         else if (initialized && dirty)
         {
             Gizmos.color = Color.white;
-            Gizmos.DrawWireCube(transform.position + new Vector3(chunkSize.x / 2f, chunkSize.y / 2f, chunkSize.z / 2f), chunkSize);
+            Gizmos.DrawWireCube(transform.position + (Vector3)logicalChunkSize / 2f, logicalChunkSize);
         }
     }
 }
