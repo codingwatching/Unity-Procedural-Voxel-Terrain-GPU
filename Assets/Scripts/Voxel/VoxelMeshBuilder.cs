@@ -23,7 +23,6 @@ namespace OptIn.Voxel
             Culling,
             GreedyOnlyHeight,
             Greedy,
-            DualContouring,
         };
 
         public class NativeMeshData
@@ -210,11 +209,14 @@ namespace OptIn.Voxel
 
             private float3 CalculateGradient(int3 pos)
             {
+                // BUG FIX 1: 法线方向必须指向密度减少的方向 (-gradient) 才能朝外。
                 float dx = GetVoxelOrEmpty(pos + new int3(1, 0, 0)).Density - GetVoxelOrEmpty(pos - new int3(1, 0, 0)).Density;
                 float dy = GetVoxelOrEmpty(pos + new int3(0, 1, 0)).Density - GetVoxelOrEmpty(pos - new int3(0, 1, 0)).Density;
                 float dz = GetVoxelOrEmpty(pos + new int3(0, 0, 1)).Density - GetVoxelOrEmpty(pos - new int3(0, 0, 1)).Density;
                 float3 grad = new float3(dx, dy, dz);
-                return math.normalizesafe(grad, -grad);
+
+                // 返回-grad的归一化向量，提供一个安全的备用值(0,1,0)。
+                return math.normalizesafe(-grad, new float3(0, 1, 0));
             }
 
             public void Execute()
@@ -228,13 +230,11 @@ namespace OptIn.Voxel
 
                             if (voxel.IsBlock)
                             {
-                                // --- PATH 1: BLOCK VOXEL ---
-                                // 使用原始的Culling算法，只生成暴露在外的面
+                                // --- PATH 1: BLOCK VOXEL (保留之前的修复) ---
                                 for (int direction = 0; direction < 6; direction++)
                                 {
                                     Voxel neighborVoxel = GetVoxelOrEmpty(pos + VoxelUtil.VoxelDirectionOffsets[direction]);
-                                    // 如果邻居不是固体（空气或密度为负的平滑体素），则生成一个面
-                                    if (!neighborVoxel.IsSolid)
+                                    if (!neighborVoxel.IsBlock)
                                     {
                                         AddQuadByDirection(direction, voxel.GetMaterialID(), 1.0f, 1.0f, pos, counter.Increment(), vertices, indices);
                                     }
@@ -243,12 +243,10 @@ namespace OptIn.Voxel
                             else // IsIsosurface
                             {
                                 // --- PATH 2: SMOOTH VOXEL (包括空气) ---
-                                // 使用Dual Contouring算法，只在平滑体素之间生成面
                                 for (int axis = 0; axis < 3; axis++)
                                 {
                                     var neighbor = GetVoxelOrEmpty(pos + VoxelUtil.DC_AXES[axis]);
 
-                                    // 关键修复：只在两个平滑体素之间进行符号检查，杜绝与方块的交互
                                     if (neighbor.IsIsosurface && SignChanged(voxel, neighbor))
                                     {
                                         int quadIndex = counter.Increment();
@@ -260,18 +258,33 @@ namespace OptIn.Voxel
                                             vertices[quadIndex * 4 + i] = new GPUVertex
                                             {
                                                 position = CalculateFeaturePoint(cornerPos),
-                                                normal = CalculateGradient(cornerPos),
+                                                normal = CalculateGradient(cornerPos), // 使用已修复的法线
                                                 uv = new float4(0, 0, materialId, 0)
                                             };
                                         }
 
                                         int vertIndex = quadIndex * 4;
-                                        indices[quadIndex * 6 + 0] = vertIndex + 0;
-                                        indices[quadIndex * 6 + 1] = vertIndex + 1;
-                                        indices[quadIndex * 6 + 2] = vertIndex + 2;
-                                        indices[quadIndex * 6 + 3] = vertIndex + 0;
-                                        indices[quadIndex * 6 + 4] = vertIndex + 2;
-                                        indices[quadIndex * 6 + 5] = vertIndex + 3;
+                                        // BUG FIX 2: 根据密度正负动态决定绕序，确保所有面都朝外。
+                                        if (voxel.Density > 0)
+                                        {
+                                            // 当前体素是实体，邻居是空气，法线朝向邻居（正方向）
+                                            indices[quadIndex * 6 + 0] = vertIndex + 0;
+                                            indices[quadIndex * 6 + 1] = vertIndex + 1;
+                                            indices[quadIndex * 6 + 2] = vertIndex + 2;
+                                            indices[quadIndex * 6 + 3] = vertIndex + 0;
+                                            indices[quadIndex * 6 + 4] = vertIndex + 2;
+                                            indices[quadIndex * 6 + 5] = vertIndex + 3;
+                                        }
+                                        else
+                                        {
+                                            // 当前体素是空气，邻居是实体，法线朝向自己（负方向），需要翻转绕序
+                                            indices[quadIndex * 6 + 0] = vertIndex + 0;
+                                            indices[quadIndex * 6 + 1] = vertIndex + 2;
+                                            indices[quadIndex * 6 + 2] = vertIndex + 1;
+                                            indices[quadIndex * 6 + 3] = vertIndex + 0;
+                                            indices[quadIndex * 6 + 4] = vertIndex + 3;
+                                            indices[quadIndex * 6 + 5] = vertIndex + 2;
+                                        }
                                     }
                                 }
                             }

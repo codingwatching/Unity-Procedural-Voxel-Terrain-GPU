@@ -18,16 +18,7 @@ public class VoxelController : MonoBehaviour
         var terrainGenerator = TerrainGenerator.Instance;
         if (terrainGenerator == null) return;
 
-        var simplifyingMethod = terrainGenerator.SimplifyingMethod;
-
-        if (simplifyingMethod == VoxelMeshBuilder.SimplifyingMethod.DualContouring)
-        {
-            HandleSmoothEditing(terrainGenerator);
-        }
-        else
-        {
-            HandleBlockEditing(terrainGenerator);
-        }
+        HandleBlockEditing(terrainGenerator);
     }
 
     private void HandleBlockEditing(TerrainGenerator generator)
