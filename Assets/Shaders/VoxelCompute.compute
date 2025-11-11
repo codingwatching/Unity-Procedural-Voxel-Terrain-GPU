@@ -1,18 +1,13 @@
-// VoxelNoiseCompute.compute
 #pragma kernel CSMain
-#pragma kernel SetVoxel
 
 #include "Ruri_Common_FractalLibrary.hlsl"
 
 struct Voxel
 {
-    uint type;
+    int voxelID;
+    uint metadata; // In HLSL, bool/byte aligns to 4 bytes, so we use uint. We only care about the first byte.
 };
 RWStructuredBuffer<Voxel> asyncVoxelBuffer;
-
-// CPU传入
-int3 gridPosition;
-int newVoxelType; 
 
 int3 chunkPosition;
 uint3 chunkSize;
@@ -74,39 +69,29 @@ float CombinedFractalDE(float3 fractalPos, float4 minFractalPos, float4 maxFract
 }
 
 //---------------------------------------------------
-// 主计算函数
+// Main compute function
 //---------------------------------------------------
-[numthreads(4,4,4)]
-void CSMain (uint3 id : SV_DispatchThreadID)
+[numthreads(4, 4, 4)]
+void CSMain(uint3 id : SV_DispatchThreadID)
 {
-    // 使用行主序计算唯一索引
     int index = id.z + id.y * chunkSize.z + id.x * (chunkSize.y * chunkSize.z);
     
-    // 计算世界坐标（与原逻辑保持一致）
-    int3 worldPos = int3(id) + (chunkPosition * chunkSize); 
-    // 旋转90度并缩放100倍匹配Unity坐标系
+    int3 worldPos = int3(id) + (chunkPosition * chunkSize);
     float3 fractalPos = float3(worldPos.x, -worldPos.z, worldPos.y) * 0.01;
     
-    // 硬编码克莱因群位置
     float4 minFractalPos = float4(-0.3252, -0.7862, -0.0948, 0.678);
-    float4 maxFractalPos = float4( 0.3457,  1.0218,  1.2215, 0.9);
+    float4 maxFractalPos = float4(0.3457, 1.0218, 1.2215, 0.9);
     float dist = CombinedFractalDE(fractalPos, minFractalPos, maxFractalPos);
     
-    int voxelType = 0; // 空气方块
+    int voxelID = 0; // Default to Air
+    uint metadata = 0; // Default metadata
+    
+    // --- Default to generating Blocks ---
     if (dist < 0.0)
-        voxelType = 1; // 土块 
+    {
+        voxelID = 1; // Block ID 1 (e.g., Dirt/Stone)
+    }
 
-    asyncVoxelBuffer[index].type = voxelType;
-}
-
-// 每个线程组只包含 1 个线程
-[numthreads(1,1,1)]
-void SetVoxel (uint3 id : SV_DispatchThreadID)
-{
-    // 计算 1D 下标
-    int index = gridPosition.z +
-                gridPosition.y * chunkSize.z +
-                gridPosition.x * chunkSize.y * chunkSize.z;
-
-    asyncVoxelBuffer[index].type = newVoxelType;
+    asyncVoxelBuffer[index].voxelID = voxelID;
+    asyncVoxelBuffer[index].metadata = metadata;
 }

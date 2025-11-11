@@ -1,5 +1,4 @@
 using System.Collections;
-using OptIn.Voxel.Utils;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
@@ -24,6 +23,7 @@ namespace OptIn.Voxel
             Culling,
             GreedyOnlyHeight,
             Greedy,
+            DualContouring,
         };
 
         public class NativeMeshData
@@ -54,22 +54,17 @@ namespace OptIn.Voxel
 
             public void Dispose()
             {
-                if (nativeVoxels.IsCreated)
-                    nativeVoxels.Dispose();
-
-                if (nativeVertices.IsCreated)
-                    nativeVertices.Dispose();
-
-                if (nativeIndices.IsCreated)
-                    nativeIndices.Dispose();
-
-                if (counter.IsCreated)
-                    counter.Dispose();
+                if (nativeVoxels.IsCreated) nativeVoxels.Dispose();
+                if (nativeVertices.IsCreated) nativeVertices.Dispose();
+                if (nativeIndices.IsCreated) nativeIndices.Dispose();
+                if (counter.IsCreated) counter.Dispose();
             }
 
             public IEnumerator ScheduleMeshingJob(Voxel[] voxels, int3 chunkSize, SimplifyingMethod method, bool argent = false)
             {
                 nativeVoxels.CopyFrom(voxels);
+                counter.Count = 0;
+
                 switch (method)
                 {
                     case SimplifyingMethod.Culling:
@@ -81,16 +76,15 @@ namespace OptIn.Voxel
                     case SimplifyingMethod.Greedy:
                         ScheduleGreedyJob(nativeVoxels, chunkSize);
                         break;
+                    case SimplifyingMethod.DualContouring:
+                        ScheduleDualContouringJob(nativeVoxels, chunkSize);
+                        break;
                     default:
-                        ScheduleGreedyJob(nativeVoxels, chunkSize);
+                        ScheduleCullingJob(nativeVoxels, chunkSize);
                         break;
                 }
 
-                yield return new WaitUntil(() =>
-                {
-                    return jobHandle.IsCompleted || argent;
-                });
-
+                yield return new WaitUntil(() => jobHandle.IsCompleted || argent);
                 jobHandle.Complete();
             }
 
@@ -102,7 +96,7 @@ namespace OptIn.Voxel
 
             void ScheduleCullingJob(NativeArray<Voxel> voxels, int3 chunkSize)
             {
-                VoxelCullingJob voxelCullingJob = new VoxelCullingJob
+                VoxelCullingJob job = new VoxelCullingJob
                 {
                     voxels = voxels,
                     chunkSize = chunkSize,
@@ -110,14 +104,27 @@ namespace OptIn.Voxel
                     indices = nativeIndices,
                     counter = counter,
                 };
+                jobHandle = job.Schedule();
+                JobHandle.ScheduleBatchedJobs();
+            }
 
-                jobHandle = voxelCullingJob.Schedule();
+            void ScheduleDualContouringJob(NativeArray<Voxel> voxels, int3 chunkSize)
+            {
+                VoxelDualContouringJob job = new VoxelDualContouringJob
+                {
+                    voxels = voxels,
+                    chunkSize = chunkSize,
+                    vertices = nativeVertices,
+                    indices = nativeIndices,
+                    counter = counter.ToConcurrent(),
+                };
+                jobHandle = job.Schedule();
                 JobHandle.ScheduleBatchedJobs();
             }
 
             void ScheduleGreedyOnlyHeightJob(NativeArray<Voxel> voxels, int3 chunkSize)
             {
-                VoxelGreedyMeshingOnlyHeightJob voxelMeshingOnlyHeightJob = new VoxelGreedyMeshingOnlyHeightJob
+                VoxelGreedyMeshingOnlyHeightJob job = new VoxelGreedyMeshingOnlyHeightJob
                 {
                     voxels = voxels,
                     chunkSize = chunkSize,
@@ -125,14 +132,13 @@ namespace OptIn.Voxel
                     indices = nativeIndices,
                     counter = counter,
                 };
-
-                jobHandle = voxelMeshingOnlyHeightJob.Schedule();
+                jobHandle = job.Schedule();
                 JobHandle.ScheduleBatchedJobs();
             }
 
             void ScheduleGreedyJob(NativeArray<Voxel> voxels, int3 chunkSize)
             {
-                VoxelGreedyMeshingJob voxelMeshingJob = new VoxelGreedyMeshingJob
+                VoxelGreedyMeshingJob job = new VoxelGreedyMeshingJob
                 {
                     voxels = voxels,
                     chunkSize = chunkSize,
@@ -140,10 +146,16 @@ namespace OptIn.Voxel
                     indices = nativeIndices,
                     counter = counter,
                 };
-
-                jobHandle = voxelMeshingJob.Schedule();
+                jobHandle = job.Schedule();
                 JobHandle.ScheduleBatchedJobs();
             }
+        }
+
+        static bool IsVoxelSolid(NativeArray<Voxel> voxels, int3 position, int3 chunkSize)
+        {
+            if (!VoxelUtil.BoundaryCheck(position, chunkSize))
+                return false;
+            return voxels[VoxelUtil.To1DIndex(position, chunkSize)].IsSolid;
         }
 
         [BurstCompile]
@@ -151,45 +163,127 @@ namespace OptIn.Voxel
         {
             [ReadOnly] public NativeArray<Voxel> voxels;
             [ReadOnly] public int3 chunkSize;
-
-            [NativeDisableParallelForRestriction]
-            [WriteOnly]
-            public NativeArray<GPUVertex> vertices;
-
-            [NativeDisableParallelForRestriction]
-            [WriteOnly]
-            public NativeArray<int> indices;
-
+            [NativeDisableParallelForRestriction][WriteOnly] public NativeArray<GPUVertex> vertices;
+            [NativeDisableParallelForRestriction][WriteOnly] public NativeArray<int> indices;
             [WriteOnly] public NativeCounter counter;
 
             public void Execute()
             {
                 for (int x = 0; x < chunkSize.x; x++)
-                {
                     for (int y = 0; y < chunkSize.y; y++)
-                    {
                         for (int z = 0; z < chunkSize.z; z++)
                         {
                             int3 gridPosition = new int3(x, y, z);
-                            int index = VoxelUtil.To1DIndex(gridPosition, chunkSize);
+                            Voxel voxel = voxels[VoxelUtil.To1DIndex(gridPosition, chunkSize)];
 
-                            Voxel voxel = voxels[index];
-
-                            if (voxel.data == Voxel.VoxelType.Air)
-                                continue;
+                            if (!voxel.IsBlock) continue;
 
                             for (int direction = 0; direction < 6; direction++)
                             {
                                 int3 neighborPosition = gridPosition + VoxelUtil.VoxelDirectionOffsets[direction];
+                                if (IsVoxelSolid(voxels, neighborPosition, chunkSize)) continue;
 
-                                if (TransparencyCheck(voxels, neighborPosition, chunkSize))
-                                    continue;
-
-                                AddQuadByDirection(direction, voxel.data, 1.0f, 1.0f, gridPosition, counter.Increment(), vertices, indices);
+                                AddQuadByDirection(direction, voxel.GetMaterialID(), 1.0f, 1.0f, gridPosition, counter.Increment(), vertices, indices);
                             }
                         }
+            }
+        }
+
+        [BurstCompile]
+        struct VoxelDualContouringJob : IJob
+        {
+            [ReadOnly] public NativeArray<Voxel> voxels;
+            [ReadOnly] public int3 chunkSize;
+            [NativeDisableParallelForRestriction][WriteOnly] public NativeArray<GPUVertex> vertices;
+            [NativeDisableParallelForRestriction][WriteOnly] public NativeArray<int> indices;
+            public NativeCounter.Concurrent counter;
+
+            private Voxel GetVoxelOrEmpty(int3 pos)
+            {
+                return VoxelUtil.BoundaryCheck(pos, chunkSize) ? voxels[VoxelUtil.To1DIndex(pos, chunkSize)] : Voxel.Empty;
+            }
+
+            private bool SignChanged(Voxel v1, Voxel v2) => v1.Density > 0 != v2.Density > 0;
+
+            private float3 CalculateFeaturePoint(int3 pos)
+            {
+                float3 pointSum = float3.zero;
+                int crossings = 0;
+                for (int i = 0; i < 12; i++)
+                {
+                    Voxel v1 = GetVoxelOrEmpty(pos + VoxelUtil.DC_VERT[VoxelUtil.DC_EDGE[i, 0]]);
+                    Voxel v2 = GetVoxelOrEmpty(pos + VoxelUtil.DC_VERT[VoxelUtil.DC_EDGE[i, 1]]);
+                    if (SignChanged(v1, v2))
+                    {
+                        float t = math.unlerp(v1.Density, v2.Density, 0f);
+                        if (!float.IsFinite(t)) t = 0.5f;
+                        pointSum += math.lerp(pos + VoxelUtil.DC_VERT[VoxelUtil.DC_EDGE[i, 0]], pos + VoxelUtil.DC_VERT[VoxelUtil.DC_EDGE[i, 1]], t);
+                        crossings++;
                     }
                 }
+                return crossings > 0 ? pointSum / crossings : (float3)pos + 0.5f;
+            }
+
+            private float3 CalculateGradient(int3 pos)
+            {
+                float dx = GetVoxelOrEmpty(pos + new int3(1, 0, 0)).Density - GetVoxelOrEmpty(pos - new int3(1, 0, 0)).Density;
+                float dy = GetVoxelOrEmpty(pos + new int3(0, 1, 0)).Density - GetVoxelOrEmpty(pos - new int3(0, 1, 0)).Density;
+                float dz = GetVoxelOrEmpty(pos + new int3(0, 0, 1)).Density - GetVoxelOrEmpty(pos - new int3(0, 0, 1)).Density;
+                float3 grad = new float3(dx, dy, dz);
+                return math.normalizesafe(grad, -grad);
+            }
+
+            public void Execute()
+            {
+                for (int x = 0; x < chunkSize.x; x++)
+                    for (int y = 0; y < chunkSize.y; y++)
+                        for (int z = 0; z < chunkSize.z; z++)
+                        {
+                            var pos = new int3(x, y, z);
+                            var voxel = GetVoxelOrEmpty(pos);
+
+                            if (voxel.IsIsosurface)
+                            {
+                                for (int axis = 0; axis < 3; axis++)
+                                {
+                                    var neighbor = GetVoxelOrEmpty(pos + VoxelUtil.DC_AXES[axis]);
+                                    if (SignChanged(voxel, neighbor))
+                                    {
+                                        int quadIndex = counter.Increment();
+                                        ushort materialId = voxel.Density > 0 ? voxel.GetMaterialID() : neighbor.GetMaterialID();
+
+                                        for (int i = 0; i < 4; i++)
+                                        {
+                                            var cornerPos = pos + VoxelUtil.DC_ADJACENT[axis, i];
+                                            vertices[quadIndex * 4 + i] = new GPUVertex
+                                            {
+                                                position = CalculateFeaturePoint(cornerPos),
+                                                normal = CalculateGradient(cornerPos),
+                                                uv = new float4(0, 0, materialId, 0)
+                                            };
+                                        }
+
+                                        int vertIndex = quadIndex * 4;
+                                        indices[quadIndex * 6 + 0] = vertIndex + 0;
+                                        indices[quadIndex * 6 + 1] = vertIndex + 1;
+                                        indices[quadIndex * 6 + 2] = vertIndex + 2;
+                                        indices[quadIndex * 6 + 3] = vertIndex + 0;
+                                        indices[quadIndex * 6 + 4] = vertIndex + 2;
+                                        indices[quadIndex * 6 + 5] = vertIndex + 3;
+                                    }
+                                }
+                            }
+                            else // IsBlock
+                            {
+                                for (int direction = 0; direction < 6; direction++)
+                                {
+                                    Voxel neighborVoxel = GetVoxelOrEmpty(pos + VoxelUtil.VoxelDirectionOffsets[direction]);
+                                    if (neighborVoxel.IsSolid) continue;
+
+                                    AddQuadByDirection(direction, voxel.GetMaterialID(), 1.0f, 1.0f, pos, counter.Increment(), vertices, indices);
+                                }
+                            }
+                        }
             }
         }
 
@@ -198,72 +292,36 @@ namespace OptIn.Voxel
         {
             [ReadOnly] public NativeArray<Voxel> voxels;
             [ReadOnly] public int3 chunkSize;
-
-            [NativeDisableParallelForRestriction]
-            [WriteOnly]
-            public NativeArray<GPUVertex> vertices;
-
-            [NativeDisableParallelForRestriction]
-            [WriteOnly]
-            public NativeArray<int> indices;
-
+            [NativeDisableParallelForRestriction][WriteOnly] public NativeArray<GPUVertex> vertices;
+            [NativeDisableParallelForRestriction][WriteOnly] public NativeArray<int> indices;
             [WriteOnly] public NativeCounter counter;
 
             public void Execute()
             {
                 for (int direction = 0; direction < 6; direction++)
-                {
                     for (int depth = 0; depth < chunkSize[VoxelUtil.DirectionAlignedZ[direction]]; depth++)
-                    {
                         for (int x = 0; x < chunkSize[VoxelUtil.DirectionAlignedX[direction]]; x++)
-                        {
                             for (int y = 0; y < chunkSize[VoxelUtil.DirectionAlignedY[direction]];)
                             {
-                                int3 gridPosition = new int3
-                                {
-                                    [VoxelUtil.DirectionAlignedX[direction]] = x,
-                                    [VoxelUtil.DirectionAlignedY[direction]] = y,
-                                    [VoxelUtil.DirectionAlignedZ[direction]] = depth
-                                };
+                                int3 gridPosition = new int3 { [VoxelUtil.DirectionAlignedX[direction]] = x, [VoxelUtil.DirectionAlignedY[direction]] = y, [VoxelUtil.DirectionAlignedZ[direction]] = depth };
+                                Voxel voxel = voxels[VoxelUtil.To1DIndex(gridPosition, chunkSize)];
 
-                                int index = VoxelUtil.To1DIndex(gridPosition, chunkSize);
-
-                                Voxel voxel = voxels[index];
-
-                                if (voxel.data == Voxel.VoxelType.Air)
-                                {
-                                    y++;
-                                    continue;
-                                }
+                                if (!voxel.IsBlock) { y++; continue; }
 
                                 int3 neighborPosition = gridPosition + VoxelUtil.VoxelDirectionOffsets[direction];
-
-                                if (TransparencyCheck(voxels, neighborPosition, chunkSize))
-                                {
-                                    y++;
-                                    continue;
-                                }
+                                if (IsVoxelSolid(voxels, neighborPosition, chunkSize)) { y++; continue; }
 
                                 int height;
                                 for (height = 1; height + y < chunkSize[VoxelUtil.DirectionAlignedY[direction]]; height++)
                                 {
                                     int3 nextPosition = gridPosition;
                                     nextPosition[VoxelUtil.DirectionAlignedY[direction]] += height;
-
-                                    int nextIndex = VoxelUtil.To1DIndex(nextPosition, chunkSize);
-
-                                    Voxel nextVoxel = voxels[nextIndex];
-
-                                    if (nextVoxel.data != voxel.data)
-                                        break;
+                                    Voxel nextVoxel = voxels[VoxelUtil.To1DIndex(nextPosition, chunkSize)];
+                                    if (nextVoxel.voxelID != voxel.voxelID) break;
                                 }
-
-                                AddQuadByDirection(direction, voxel.data, 1.0f, height, gridPosition, counter.Increment(), vertices, indices);
+                                AddQuadByDirection(direction, voxel.GetMaterialID(), 1.0f, height, gridPosition, counter.Increment(), vertices, indices);
                                 y += height;
                             }
-                        }
-                    }
-                }
             }
         }
 
@@ -272,24 +330,16 @@ namespace OptIn.Voxel
         {
             [ReadOnly] public NativeArray<Voxel> voxels;
             [ReadOnly] public int3 chunkSize;
-
-            [NativeDisableParallelForRestriction]
-            [WriteOnly]
-            public NativeArray<GPUVertex> vertices;
-
-            [NativeDisableParallelForRestriction]
-            [WriteOnly]
-            public NativeArray<int> indices;
-
+            [NativeDisableParallelForRestriction][WriteOnly] public NativeArray<GPUVertex> vertices;
+            [NativeDisableParallelForRestriction][WriteOnly] public NativeArray<int> indices;
             [WriteOnly] public NativeCounter counter;
-
             struct Empty { }
 
             public void Execute()
             {
                 for (int direction = 0; direction < 6; direction++)
                 {
-                    NativeParallelHashMap<int3, Empty> hashMap = new NativeParallelHashMap<int3, Empty>(chunkSize[VoxelUtil.DirectionAlignedX[direction]] * chunkSize[VoxelUtil.DirectionAlignedY[direction]], Allocator.Temp);
+                    var hashMap = new NativeParallelHashMap<int3, Empty>(chunkSize[VoxelUtil.DirectionAlignedX[direction]] * chunkSize[VoxelUtil.DirectionAlignedY[direction]], Allocator.Temp);
                     for (int depth = 0; depth < chunkSize[VoxelUtil.DirectionAlignedZ[direction]]; depth++)
                     {
                         for (int x = 0; x < chunkSize[VoxelUtil.DirectionAlignedX[direction]]; x++)
@@ -297,28 +347,11 @@ namespace OptIn.Voxel
                             for (int y = 0; y < chunkSize[VoxelUtil.DirectionAlignedY[direction]];)
                             {
                                 int3 gridPosition = new int3 { [VoxelUtil.DirectionAlignedX[direction]] = x, [VoxelUtil.DirectionAlignedY[direction]] = y, [VoxelUtil.DirectionAlignedZ[direction]] = depth };
-
                                 Voxel voxel = voxels[VoxelUtil.To1DIndex(gridPosition, chunkSize)];
 
-                                if (voxel.data == Voxel.VoxelType.Air)
-                                {
-                                    y++;
-                                    continue;
-                                }
+                                if (!voxel.IsBlock || hashMap.ContainsKey(gridPosition)) { y++; continue; }
 
-                                if (hashMap.ContainsKey(gridPosition))
-                                {
-                                    y++;
-                                    continue;
-                                }
-
-                                int3 neighborPosition = gridPosition + VoxelUtil.VoxelDirectionOffsets[direction];
-
-                                if (TransparencyCheck(voxels, neighborPosition, chunkSize))
-                                {
-                                    y++;
-                                    continue;
-                                }
+                                if (IsVoxelSolid(voxels, gridPosition + VoxelUtil.VoxelDirectionOffsets[direction], chunkSize)) { y++; continue; }
 
                                 hashMap.TryAdd(gridPosition, new Empty());
 
@@ -327,15 +360,8 @@ namespace OptIn.Voxel
                                 {
                                     int3 nextPosition = gridPosition;
                                     nextPosition[VoxelUtil.DirectionAlignedY[direction]] += height;
-
                                     Voxel nextVoxel = voxels[VoxelUtil.To1DIndex(nextPosition, chunkSize)];
-
-                                    if (nextVoxel.data != voxel.data)
-                                        break;
-
-                                    if (hashMap.ContainsKey(nextPosition))
-                                        break;
-
+                                    if (nextVoxel.voxelID != voxel.voxelID || hashMap.ContainsKey(nextPosition)) break;
                                     hashMap.TryAdd(nextPosition, new Empty());
                                 }
 
@@ -348,21 +374,14 @@ namespace OptIn.Voxel
                                         int3 nextPosition = gridPosition;
                                         nextPosition[VoxelUtil.DirectionAlignedX[direction]] += width;
                                         nextPosition[VoxelUtil.DirectionAlignedY[direction]] += dy;
-
                                         Voxel nextVoxel = voxels[VoxelUtil.To1DIndex(nextPosition, chunkSize)];
-
-                                        if (nextVoxel.data != voxel.data || hashMap.ContainsKey(nextPosition))
+                                        if (nextVoxel.voxelID != voxel.voxelID || hashMap.ContainsKey(nextPosition))
                                         {
                                             isDone = true;
                                             break;
                                         }
                                     }
-
-                                    if (isDone)
-                                    {
-                                        break;
-                                    }
-
+                                    if (isDone) break;
                                     for (int dy = 0; dy < height; dy++)
                                     {
                                         int3 nextPosition = gridPosition;
@@ -372,11 +391,10 @@ namespace OptIn.Voxel
                                     }
                                 }
 
-                                AddQuadByDirection(direction, voxel.data, width, height, gridPosition, counter.Increment(), vertices, indices);
+                                AddQuadByDirection(direction, voxel.GetMaterialID(), width, height, gridPosition, counter.Increment(), vertices, indices);
                                 y += height;
                             }
                         }
-
                         hashMap.Clear();
                     }
                     hashMap.Dispose();
@@ -384,36 +402,30 @@ namespace OptIn.Voxel
             }
         }
 
-        public static bool TransparencyCheck(NativeArray<Voxel> voxels, int3 position, int3 chunkSize)
-        {
-            if (!VoxelUtil.BoundaryCheck(position, chunkSize))
-                return false;
-
-            return voxels[VoxelUtil.To1DIndex(position, chunkSize)].data != Voxel.VoxelType.Air;
-        }
-
-        static unsafe void AddQuadByDirection(int direction, Voxel.VoxelType data, float width, float height, int3 gridPosition, int quadIndex, NativeArray<GPUVertex> vertices, NativeArray<int> indices)
+        static void AddQuadByDirection(int direction, ushort materialID, float width, float height, int3 gridPosition, int quadIndex, NativeArray<GPUVertex> vertices, NativeArray<int> indices)
         {
             int vertexStart = quadIndex * 4;
             for (int i = 0; i < 4; i++)
             {
-                GPUVertex v = new GPUVertex();
                 float3 pos = VoxelUtil.CubeVertices[VoxelUtil.CubeFaces[i + direction * 4]];
                 pos[VoxelUtil.DirectionAlignedX[direction]] *= width;
                 pos[VoxelUtil.DirectionAlignedY[direction]] *= height;
-                v.position = pos + gridPosition;
-                v.normal = VoxelUtil.VoxelDirectionOffsets[direction];
-                int atlasIndex = (int)data * 6 + direction;
-                int2 atlasPosition = new int2 { x = atlasIndex % AtlasSize.x, y = atlasIndex / AtlasSize.x };
-                v.uv = new float4 { x = VoxelUtil.CubeUVs[i].x * width, y = VoxelUtil.CubeUVs[i].y * height, z = atlasPosition.x, w = atlasPosition.y };
-                vertices[vertexStart + i] = v;
+
+                int atlasIndex = materialID * 6 + direction;
+                int2 atlasPosition = new int2(atlasIndex % AtlasSize.x, atlasIndex / AtlasSize.x);
+
+                vertices[vertexStart + i] = new GPUVertex
+                {
+                    position = pos + gridPosition,
+                    normal = VoxelUtil.VoxelDirectionOffsets[direction],
+                    uv = new float4(VoxelUtil.CubeUVs[i].x * width, VoxelUtil.CubeUVs[i].y * height, atlasPosition.x, atlasPosition.y)
+                };
             }
 
             int indexStart = quadIndex * 6;
-            int baseVertex = vertexStart;
             for (int i = 0; i < 6; i++)
             {
-                indices[indexStart + i] = VoxelUtil.CubeIndices[direction * 6 + i] + baseVertex;
+                indices[indexStart + i] = VoxelUtil.CubeIndices[i + direction * 6] + vertexStart;
             }
         }
     }

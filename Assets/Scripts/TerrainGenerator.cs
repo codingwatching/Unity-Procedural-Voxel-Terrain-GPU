@@ -1,5 +1,4 @@
-﻿using System.Collections;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using OptIn.Voxel;
 using Priority_Queue;
 using UnityEngine;
@@ -7,9 +6,6 @@ using UnityEngine;
 public class TerrainGenerator : Singleton<TerrainGenerator>
 {
     [SerializeField] Transform target;
-    /// <summary>
-    /// 必须是8的倍数对应CS的线程数
-    /// </summary>
     [SerializeField] Vector3Int chunkSize = Vector3Int.one * 32;
     [SerializeField] Vector2Int chunkSpawnSize = Vector2Int.one * 8;
     [SerializeField] Material chunkMaterial;
@@ -23,7 +19,6 @@ public class TerrainGenerator : Singleton<TerrainGenerator>
 
     Dictionary<Vector3Int, Chunk> chunks = new Dictionary<Vector3Int, Chunk>();
     Vector3Int lastTargetChunkPosition = new Vector3Int(int.MinValue, int.MaxValue, int.MinValue);
-    //Queue<ChunkNode> generateChunkQueue = new Queue<ChunkNode>();
     FastPriorityQueue<ChunkNode> generateChunkQueue = new FastPriorityQueue<ChunkNode>(100000);
     int updatingChunks;
     public ComputeShader voxelComputeShader;
@@ -57,50 +52,44 @@ public class TerrainGenerator : Singleton<TerrainGenerator>
 
     void GenerateChunkByTargetPosition()
     {
-        if (target == null)
-            return;
+        if (target == null) return;
 
         Vector3Int targetPosition = VoxelUtil.WorldToChunk(target.position, chunkSize);
+        if (lastTargetChunkPosition == targetPosition) return;
 
-        if (lastTargetChunkPosition == targetPosition)
-            return;
-
-        // 更新队列中每个节点的优先级，同时删除超出范围的节点
+        var toRemove = new List<ChunkNode>();
         foreach (ChunkNode chunkNode in generateChunkQueue)
         {
             Vector3Int deltaPosition = targetPosition - chunkNode.chunkPosition;
-            // X 和 Z 使用 chunkSpawnSize.x，Y 使用 chunkSpawnSize.y
-            if (chunkSpawnSize.x < Mathf.Abs(deltaPosition.x) ||
-                chunkSpawnSize.y < Mathf.Abs(deltaPosition.y) ||
-                chunkSpawnSize.x < Mathf.Abs(deltaPosition.z))
+            if (Mathf.Abs(deltaPosition.x) > chunkSpawnSize.x ||
+                Mathf.Abs(deltaPosition.y) > chunkSpawnSize.y ||
+                Mathf.Abs(deltaPosition.z) > chunkSpawnSize.x)
             {
-                generateChunkQueue.Remove(chunkNode);
-                continue;
+                toRemove.Add(chunkNode);
             }
-
-            generateChunkQueue.UpdatePriority(chunkNode, (targetPosition - chunkNode.chunkPosition).sqrMagnitude);
+            else
+            {
+                generateChunkQueue.UpdatePriority(chunkNode, (targetPosition - chunkNode.chunkPosition).sqrMagnitude);
+            }
+        }
+        foreach (var node in toRemove)
+        {
+            if (generateChunkQueue.Contains(node))
+                generateChunkQueue.Remove(node);
         }
 
-        // 三重循环：X、Y、Z 三个方向生成块
         for (int x = targetPosition.x - chunkSpawnSize.x; x <= targetPosition.x + chunkSpawnSize.x; x++)
-        {
             for (int y = targetPosition.y - chunkSpawnSize.y; y <= targetPosition.y + chunkSpawnSize.y; y++)
-            {
                 for (int z = targetPosition.z - chunkSpawnSize.x; z <= targetPosition.z + chunkSpawnSize.x; z++)
                 {
                     Vector3Int chunkPosition = new Vector3Int(x, y, z);
-                    if (chunks.ContainsKey(chunkPosition))
-                        continue;
+                    if (chunks.ContainsKey(chunkPosition)) continue;
 
                     ChunkNode newNode = new ChunkNode { chunkPosition = chunkPosition };
-
-                    if (generateChunkQueue.Contains(newNode))
-                        continue;
+                    if (generateChunkQueue.Contains(newNode)) continue;
 
                     generateChunkQueue.Enqueue(newNode, (targetPosition - chunkPosition).sqrMagnitude);
                 }
-            }
-        }
 
         lastTargetChunkPosition = targetPosition;
     }
@@ -108,11 +97,8 @@ public class TerrainGenerator : Singleton<TerrainGenerator>
     void ProcessGenerateChunkQueue()
     {
         int numChunks = 0;
-        while (generateChunkQueue.Count != 0)
+        while (generateChunkQueue.Count > 0 && numChunks < maxGenerateChunksInFrame)
         {
-            if (numChunks >= maxGenerateChunksInFrame)
-                return;
-
             Vector3Int chunkPosition = generateChunkQueue.Dequeue().chunkPosition;
             GenerateChunk(chunkPosition);
             numChunks++;
@@ -121,8 +107,7 @@ public class TerrainGenerator : Singleton<TerrainGenerator>
 
     Chunk GenerateChunk(Vector3Int chunkPosition)
     {
-        if (chunks.ContainsKey(chunkPosition))
-            return chunks[chunkPosition];
+        if (chunks.ContainsKey(chunkPosition)) return chunks[chunkPosition];
 
         GameObject chunkGameObject = new GameObject(chunkPosition.ToString());
         chunkGameObject.transform.SetParent(transform);
@@ -130,30 +115,18 @@ public class TerrainGenerator : Singleton<TerrainGenerator>
 
         Chunk newChunk = chunkGameObject.AddComponent<Chunk>();
         newChunk.Init(chunkPosition, this);
-        // 邻居检查扩展为 3D（遍历 X、Y、Z 三个方向）
-        newChunk.CanUpdate += delegate
+        newChunk.CanUpdate += () =>
         {
-            for (int x = chunkPosition.x - 1; x <= chunkPosition.x + 1; x++)
-            {
-                for (int y = chunkPosition.y - 1; y <= chunkPosition.y + 1; y++)
-                {
-                    for (int z = chunkPosition.z - 1; z <= chunkPosition.z + 1; z++)
+            for (int x = -1; x <= 1; x++)
+                for (int y = -1; y <= 1; y++)
+                    for (int z = -1; z <= 1; z++)
                     {
-                        Vector3Int neighborChunkPosition = new Vector3Int(x, y, z);
-                        if (chunks.TryGetValue(neighborChunkPosition, out Chunk neighborChunk))
+                        if (x == 0 && y == 0 && z == 0) continue;
+                        if (chunks.TryGetValue(chunkPosition + new Vector3Int(x, y, z), out Chunk neighborChunk))
                         {
-                            if (!neighborChunk.Initialized)
-                            {
-                                return false;
-                            }
-                        }
-                        else
-                        {
-                            return false;
+                            if (!neighborChunk.Initialized) return false;
                         }
                     }
-                }
-            }
             return true;
         };
 
@@ -171,12 +144,9 @@ public class TerrainGenerator : Singleton<TerrainGenerator>
     {
         if (GetChunk(worldPosition, out Chunk chunk))
         {
-            Vector3Int chunkPosition = VoxelUtil.WorldToChunk(worldPosition, chunkSize);
-            Vector3Int gridPosition = VoxelUtil.WorldToGrid(worldPosition, chunkPosition, chunkSize);
-            if (chunk.GetVoxel(gridPosition, out voxel))
-                return true;
+            Vector3Int gridPosition = VoxelUtil.WorldToGrid(worldPosition, chunk.transform.position, chunkSize);
+            return chunk.GetVoxel(gridPosition, out voxel);
         }
-
         voxel = Voxel.Empty;
         return false;
     }
@@ -185,65 +155,117 @@ public class TerrainGenerator : Singleton<TerrainGenerator>
     {
         if (GetVoxel(worldPosition, out Voxel voxel))
         {
-            return voxel.data == Voxel.VoxelType.Air;
+            return voxel.IsAir;
         }
-
-        return false;
+        return true;
     }
 
-    public bool SetVoxel(Vector3 worldPosition, Voxel.VoxelType type)
+    public bool SetVoxel(Vector3 worldPosition, int voxelID)
     {
-        if (GetChunk(worldPosition, out Chunk chunk))
+        Voxel voxel = new Voxel { voxelID = voxelID };
+        if (voxelID <= 0) // Isosurface
         {
-            Vector3Int chunkPosition = VoxelUtil.WorldToChunk(worldPosition, chunkSize);
-            Vector3Int gridPosition = VoxelUtil.WorldToGrid(worldPosition, chunkPosition, chunkSize);
-            if (chunk.SetVoxel(gridPosition, type))
+            voxel.Density = voxelID == 0 ? -1f : 1f;
+        }
+        return SetVoxel(worldPosition, voxel);
+    }
+
+    public bool SetVoxel(Vector3 worldPosition, Voxel voxel)
+    {
+        Vector3Int chunkPos = VoxelUtil.WorldToChunk(worldPosition, chunkSize);
+        if (chunks.TryGetValue(chunkPos, out Chunk chunk))
+        {
+            Vector3Int gridPos = VoxelUtil.WorldToGrid(worldPosition, VoxelUtil.ChunkToWorld(chunkPos, chunkSize), chunkSize);
+            if (chunk.SetVoxel(gridPos, voxel))
             {
-                // Check Chunk Border
-                for (int x = -1; x <= 1; x++)
+                if (gridPos.x == 0 || gridPos.x == chunkSize.x - 1 ||
+                    gridPos.y == 0 || gridPos.y == chunkSize.y - 1 ||
+                    gridPos.z == 0 || gridPos.z == chunkSize.z - 1)
                 {
-                    for (int y = -1; y <= 1; y++)
-                    {
-                        for (int z = -1; z <= 1; z++)
-                        {
-                            if (VoxelUtil.BoundaryCheck(gridPosition + new Vector3Int(x, y, z), chunkSize))
-                                continue;
-
-                            Vector3Int neighborChunkPosition = VoxelUtil.WorldToChunk(worldPosition + new Vector3(x, y, z), chunkSize);
-                            if (chunkPosition == neighborChunkPosition)
-                                continue;
-
-                            if (chunks.TryGetValue(neighborChunkPosition, out Chunk neighborChunk))
-                            {
-                                neighborChunk.NeighborChunkIsChanged();
-                            }
-                        }
-                    }
+                    NotifyNeighborChunks(worldPosition);
                 }
-
                 return true;
             }
         }
         return false;
     }
-    /// <summary>
-    /// 获取立体临近的方块 周围26个(不包括自己)
-    /// </summary>
-    /// <param name="chunkPosition"></param>
-    /// <param name="numNeighbor"></param>
-    /// <returns></returns>
+
+    public void ModifySphere(Vector3 center, float radius, float intensity, int materialId)
+    {
+        int radiusInt = Mathf.CeilToInt(radius);
+        HashSet<Vector3Int> dirtyChunks = new HashSet<Vector3Int>();
+
+        for (int x = -radiusInt; x <= radiusInt; x++)
+            for (int y = -radiusInt; y <= radiusInt; y++)
+                for (int z = -radiusInt; z <= radiusInt; z++)
+                {
+                    Vector3 delta = new Vector3(x, y, z);
+                    float dist = delta.magnitude;
+                    if (dist > radius) continue;
+
+                    Vector3 worldPos = center + delta;
+                    Vector3Int chunkPos = VoxelUtil.WorldToChunk(worldPos, chunkSize);
+
+                    if (chunks.TryGetValue(chunkPos, out Chunk chunk))
+                    {
+                        Vector3Int gridPos = VoxelUtil.WorldToGrid(worldPos, VoxelUtil.ChunkToWorld(chunkPos, chunkSize), chunkSize);
+                        if (chunk.GetVoxel(gridPos, out Voxel oldVoxel))
+                        {
+                            float densityChange = (1.0f - dist / radius) * intensity;
+                            float newDensity = oldVoxel.Density + densityChange;
+
+                            Voxel newVoxel = new Voxel();
+                            newVoxel.Density = newDensity;
+
+                            if (newDensity > 0)
+                            {
+                                // If old voxel was a block, keep its ID. Otherwise, use new material ID.
+                                newVoxel.voxelID = oldVoxel.IsBlock ? oldVoxel.voxelID : materialId;
+                            }
+                            else
+                            {
+                                newVoxel.voxelID = 0; // Air
+                            }
+
+                            chunk.SetVoxel(gridPos, newVoxel);
+                            dirtyChunks.Add(chunkPos);
+                        }
+                    }
+                }
+
+        foreach (var chunkPos in dirtyChunks)
+        {
+            if (chunks.TryGetValue(chunkPos, out var chunk))
+            {
+                chunk.NeighborChunkIsChanged();
+                NotifyNeighborChunks(VoxelUtil.ChunkToWorld(chunkPos, chunkSize) + (Vector3)chunkSize * 0.5f);
+            }
+        }
+    }
+
+    private void NotifyNeighborChunks(Vector3 worldPosition)
+    {
+        Vector3Int centerChunkPos = VoxelUtil.WorldToChunk(worldPosition, chunkSize);
+        for (int x = -1; x <= 1; x++)
+            for (int y = -1; y <= 1; y++)
+                for (int z = -1; z <= 1; z++)
+                {
+                    Vector3Int neighborPos = centerChunkPos + new Vector3Int(x, y, z);
+                    if (chunks.TryGetValue(neighborPos, out Chunk neighborChunk))
+                    {
+                        neighborChunk.NeighborChunkIsChanged();
+                    }
+                }
+    }
+
     public List<Voxel[]> GetNeighborVoxels(Vector3Int chunkPosition, int numNeighbor)
     {
         List<Voxel[]> neighborVoxels = new List<Voxel[]>();
-
         for (int x = chunkPosition.x - numNeighbor; x <= chunkPosition.x + numNeighbor; x++)
-        {
             for (int y = chunkPosition.y - numNeighbor; y <= chunkPosition.y + numNeighbor; y++)
-            {
                 for (int z = chunkPosition.z - numNeighbor; z <= chunkPosition.z + numNeighbor; z++)
                 {
-                    Vector3Int neighborChunkPosition = new Vector3Int(x, y, z);
-                    if (chunks.TryGetValue(neighborChunkPosition, out Chunk chunk))
+                    if (chunks.TryGetValue(new Vector3Int(x, y, z), out Chunk chunk))
                     {
                         neighborVoxels.Add(chunk.Voxels);
                     }
@@ -252,10 +274,6 @@ public class TerrainGenerator : Singleton<TerrainGenerator>
                         neighborVoxels.Add(null);
                     }
                 }
-            }
-        }
-
         return neighborVoxels;
     }
-
 }

@@ -87,6 +87,7 @@ public partial class Chunk : MonoBehaviour
         int numVoxels = chunkSize.x * chunkSize.y * chunkSize.z;
         voxels = new Voxel[numVoxels];
         voxelData = new GPUVoxelData(VoxelUtil.ToInt3(chunkSize));
+        // 注意：此处的Compute Shader需要更新以匹配新的Voxel结构体布局才能正确生成密度数据。
         yield return voxelData.Generate(voxels, VoxelUtil.ToInt3(chunkPosition), VoxelUtil.ToInt3(chunkSize), generator.voxelComputeShader, generator.SimplifyingMethod);
         dirty = true;
         initialized = true;
@@ -125,10 +126,9 @@ public partial class Chunk : MonoBehaviour
 
         meshData.GetMeshInformation(out int vertexCount, out int indexCount);
 
+        mesh.Clear();
         if (vertexCount > 0 && indexCount > 0)
         {
-            mesh.Clear();
-
             mesh.SetVertexBufferParams(vertexCount, cachedVertexAttributes);
             mesh.SetIndexBufferParams(indexCount, IndexFormat.UInt32);
             // 直接上传更新的 GPUVertex 数据（实际生成的顶点数可能小于最大缓存数）
@@ -181,7 +181,7 @@ public partial class Chunk : MonoBehaviour
         return true;
     }
 
-    public bool SetVoxel(Vector3Int gridPosition, Voxel.VoxelType type)
+    public bool SetVoxel(Vector3Int gridPosition, Voxel voxel)
     {
         if (!initialized)
         {
@@ -193,7 +193,7 @@ public partial class Chunk : MonoBehaviour
             return false;
         }
 
-        voxels[VoxelUtil.To1DIndex(gridPosition, chunkSize)].data = type;
+        voxels[VoxelUtil.To1DIndex(gridPosition, chunkSize)] = voxel;
         dirty = true;
         argent = true;
         return true;
