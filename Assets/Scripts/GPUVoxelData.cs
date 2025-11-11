@@ -60,8 +60,6 @@ public class GPUVoxelData : System.IDisposable
         computeShader.SetInts("chunkSize", newChunkSize.x, newChunkSize.y, newChunkSize.z);
 
         computeShader.Dispatch(kernel, newChunkSize);
-        
-        if (simplifyingMethod == VoxelMeshBuilder.SimplifyingMethod.GPUCulling) yield break;
 
         // 创建 NativeArray 接收 GPU 读回数据，使用 Persistent 分配保证内存稳定
         NativeArray<Voxel> nativeData = new NativeArray<Voxel>(numVoxels, Allocator.Persistent);

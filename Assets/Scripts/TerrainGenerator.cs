@@ -19,15 +19,14 @@ public class TerrainGenerator : Singleton<TerrainGenerator>
     class ChunkNode : FastPriorityQueueNode
     {
         public Vector3Int chunkPosition;
-    } 
-    
+    }
+
     Dictionary<Vector3Int, Chunk> chunks = new Dictionary<Vector3Int, Chunk>();
     Vector3Int lastTargetChunkPosition = new Vector3Int(int.MinValue, int.MaxValue, int.MinValue);
     //Queue<ChunkNode> generateChunkQueue = new Queue<ChunkNode>();
     FastPriorityQueue<ChunkNode> generateChunkQueue = new FastPriorityQueue<ChunkNode>(100000);
     int updatingChunks;
     public ComputeShader voxelComputeShader;
-    public ComputeShader meshComputeShader;
 
     public Vector3Int ChunkSize => chunkSize;
     public Material ChunkMaterial => chunkMaterial;
@@ -60,7 +59,7 @@ public class TerrainGenerator : Singleton<TerrainGenerator>
     {
         if (target == null)
             return;
-        
+
         Vector3Int targetPosition = VoxelUtil.WorldToChunk(target.position, chunkSize);
 
         if (lastTargetChunkPosition == targetPosition)
@@ -78,7 +77,7 @@ public class TerrainGenerator : Singleton<TerrainGenerator>
                 generateChunkQueue.Remove(chunkNode);
                 continue;
             }
-            
+
             generateChunkQueue.UpdatePriority(chunkNode, (targetPosition - chunkNode.chunkPosition).sqrMagnitude);
         }
 
@@ -174,10 +173,10 @@ public class TerrainGenerator : Singleton<TerrainGenerator>
         {
             Vector3Int chunkPosition = VoxelUtil.WorldToChunk(worldPosition, chunkSize);
             Vector3Int gridPosition = VoxelUtil.WorldToGrid(worldPosition, chunkPosition, chunkSize);
-            if(chunk.GetVoxel(gridPosition, out voxel))
+            if (chunk.GetVoxel(gridPosition, out voxel))
                 return true;
         }
-        
+
         voxel = Voxel.Empty;
         return false;
     }
@@ -213,7 +212,7 @@ public class TerrainGenerator : Singleton<TerrainGenerator>
                             Vector3Int neighborChunkPosition = VoxelUtil.WorldToChunk(worldPosition + new Vector3(x, y, z), chunkSize);
                             if (chunkPosition == neighborChunkPosition)
                                 continue;
-                            
+
                             if (chunks.TryGetValue(neighborChunkPosition, out Chunk neighborChunk))
                             {
                                 neighborChunk.NeighborChunkIsChanged();
@@ -236,7 +235,7 @@ public class TerrainGenerator : Singleton<TerrainGenerator>
     public List<Voxel[]> GetNeighborVoxels(Vector3Int chunkPosition, int numNeighbor)
     {
         List<Voxel[]> neighborVoxels = new List<Voxel[]>();
-        
+
         for (int x = chunkPosition.x - numNeighbor; x <= chunkPosition.x + numNeighbor; x++)
         {
             for (int y = chunkPosition.y - numNeighbor; y <= chunkPosition.y + numNeighbor; y++)
@@ -258,5 +257,5 @@ public class TerrainGenerator : Singleton<TerrainGenerator>
 
         return neighborVoxels;
     }
-    
+
 }

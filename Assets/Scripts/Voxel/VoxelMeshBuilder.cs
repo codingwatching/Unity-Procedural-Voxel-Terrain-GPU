@@ -24,7 +24,6 @@ namespace OptIn.Voxel
             Culling,
             GreedyOnlyHeight,
             Greedy,
-            GPUCulling,
         };
 
         public class NativeMeshData

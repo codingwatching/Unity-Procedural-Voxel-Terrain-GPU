@@ -106,10 +106,7 @@ public partial class Chunk : MonoBehaviour
         if (CanUpdate == null || !CanUpdate())
             return;
 
-        if (generator.SimplifyingMethod == VoxelMeshBuilder.SimplifyingMethod.GPUCulling)
-            meshUpdator = StartCoroutine(nameof(UpdateGPUMesh));
-        else
-            meshUpdator = StartCoroutine(nameof(UpdateMesh));
+        meshUpdator = StartCoroutine(nameof(UpdateMesh));
     }
 
     IEnumerator UpdateMesh()
@@ -186,9 +183,6 @@ public partial class Chunk : MonoBehaviour
 
     public bool SetVoxel(Vector3Int gridPosition, Voxel.VoxelType type)
     {
-        if (generator.SimplifyingMethod == VoxelMeshBuilder.SimplifyingMethod.GPUCulling)
-            return SetGPUVoxel(gridPosition, type);
-
         if (!initialized)
         {
             return false;
