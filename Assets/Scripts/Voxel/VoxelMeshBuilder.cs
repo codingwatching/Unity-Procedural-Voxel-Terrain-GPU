@@ -1,4 +1,4 @@
-using System.Collections;
+﻿using System.Collections;
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
@@ -65,24 +65,8 @@ namespace OptIn.Voxel
                 nativeVoxels.CopyFrom(voxels);
                 counter.Count = 0;
 
-                switch (method)
-                {
-                    case SimplifyingMethod.Culling:
-                        ScheduleCullingJob(nativeVoxels, chunkSize);
-                        break;
-                    case SimplifyingMethod.GreedyOnlyHeight:
-                        ScheduleGreedyOnlyHeightJob(nativeVoxels, chunkSize);
-                        break;
-                    case SimplifyingMethod.Greedy:
-                        ScheduleGreedyJob(nativeVoxels, chunkSize);
-                        break;
-                    case SimplifyingMethod.DualContouring:
-                        ScheduleDualContouringJob(nativeVoxels, chunkSize);
-                        break;
-                    default:
-                        ScheduleCullingJob(nativeVoxels, chunkSize);
-                        break;
-                }
+                // 强制使用已修复的、包含正确分离逻辑的DualContouringJob
+                ScheduleDualContouringJob(nativeVoxels, chunkSize);
 
                 yield return new WaitUntil(() => jobHandle.IsCompleted || argent);
                 jobHandle.Complete();
@@ -242,12 +226,30 @@ namespace OptIn.Voxel
                             var pos = new int3(x, y, z);
                             var voxel = GetVoxelOrEmpty(pos);
 
-                            if (voxel.IsIsosurface)
+                            if (voxel.IsBlock)
                             {
+                                // --- PATH 1: BLOCK VOXEL ---
+                                // 使用原始的Culling算法，只生成暴露在外的面
+                                for (int direction = 0; direction < 6; direction++)
+                                {
+                                    Voxel neighborVoxel = GetVoxelOrEmpty(pos + VoxelUtil.VoxelDirectionOffsets[direction]);
+                                    // 如果邻居不是固体（空气或密度为负的平滑体素），则生成一个面
+                                    if (!neighborVoxel.IsSolid)
+                                    {
+                                        AddQuadByDirection(direction, voxel.GetMaterialID(), 1.0f, 1.0f, pos, counter.Increment(), vertices, indices);
+                                    }
+                                }
+                            }
+                            else // IsIsosurface
+                            {
+                                // --- PATH 2: SMOOTH VOXEL (包括空气) ---
+                                // 使用Dual Contouring算法，只在平滑体素之间生成面
                                 for (int axis = 0; axis < 3; axis++)
                                 {
                                     var neighbor = GetVoxelOrEmpty(pos + VoxelUtil.DC_AXES[axis]);
-                                    if (SignChanged(voxel, neighbor))
+
+                                    // 关键修复：只在两个平滑体素之间进行符号检查，杜绝与方块的交互
+                                    if (neighbor.IsIsosurface && SignChanged(voxel, neighbor))
                                     {
                                         int quadIndex = counter.Increment();
                                         ushort materialId = voxel.Density > 0 ? voxel.GetMaterialID() : neighbor.GetMaterialID();
@@ -271,16 +273,6 @@ namespace OptIn.Voxel
                                         indices[quadIndex * 6 + 4] = vertIndex + 2;
                                         indices[quadIndex * 6 + 5] = vertIndex + 3;
                                     }
-                                }
-                            }
-                            else // IsBlock
-                            {
-                                for (int direction = 0; direction < 6; direction++)
-                                {
-                                    Voxel neighborVoxel = GetVoxelOrEmpty(pos + VoxelUtil.VoxelDirectionOffsets[direction]);
-                                    if (neighborVoxel.IsSolid) continue;
-
-                                    AddQuadByDirection(direction, voxel.GetMaterialID(), 1.0f, 1.0f, pos, counter.Increment(), vertices, indices);
                                 }
                             }
                         }

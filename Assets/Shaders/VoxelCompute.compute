@@ -91,6 +91,14 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     {
         voxelID = 1; // Block ID 1 (e.g., Dirt/Stone)
     }
+    if (fractalPos.x > 0)
+    {
+        voxelID = -1; // Block ID 1 (e.g., Dirt/Stone)
+        float density = clamp(-dist, -1.0, 1.0); 
+        
+        // 将 [-1, 1] 的密度映射到 [0, 255] 的 metadata
+        metadata = (uint)(density * 127.0 + 128.0);
+    }
 
     asyncVoxelBuffer[index].voxelID = voxelID;
     asyncVoxelBuffer[index].metadata = metadata;
