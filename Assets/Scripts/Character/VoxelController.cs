@@ -24,7 +24,7 @@ public class VoxelController : MonoBehaviour
     private void HandleBlockEditing(TerrainGenerator generator)
     {
         // Place Block
-        if (Input.GetMouseButtonDown(0))
+        if (Input.GetMouseButtonDown(1))
         {
             Ray ray = Camera.main.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0));
             if (Physics.Raycast(ray, out RaycastHit hit, 100f))
@@ -36,7 +36,7 @@ public class VoxelController : MonoBehaviour
         }
 
         // Remove Block
-        if (Input.GetMouseButtonDown(1))
+        if (Input.GetMouseButtonDown(0))
         {
             Ray ray = Camera.main.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0));
             if (Physics.Raycast(ray, out RaycastHit hit, 100f))
@@ -50,7 +50,7 @@ public class VoxelController : MonoBehaviour
     private void HandleSmoothEditing(TerrainGenerator generator)
     {
         // Add density (build)
-        if (Input.GetMouseButton(0))
+        if (Input.GetMouseButton(1))
         {
             Ray ray = Camera.main.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0));
             if (Physics.Raycast(ray, out RaycastHit hit, 100f))
@@ -61,7 +61,7 @@ public class VoxelController : MonoBehaviour
         }
 
         // Subtract density (carve)
-        if (Input.GetMouseButton(1))
+        if (Input.GetMouseButton(0))
         {
             Ray ray = Camera.main.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0));
             if (Physics.Raycast(ray, out RaycastHit hit, 100f))
