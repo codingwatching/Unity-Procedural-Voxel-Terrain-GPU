@@ -4,8 +4,11 @@
 
 struct Voxel
 {
-    int voxelID;
-    uint metadata; // In HLSL, bool/byte aligns to 4 bytes, so we use uint. We only care about the first byte.
+    // C# Voxel is { short voxelID; short metadata; }. Total 4 bytes.
+    // This is represented as a single uint in HLSL.
+    // lower 16 bits: voxelID (signed)
+    // upper 16 bits: metadata (signed)
+    uint packedData;
 };
 RWStructuredBuffer<Voxel> asyncVoxelBuffer;
 
@@ -90,8 +93,9 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     float4 maxFractalPos = float4(0.3457, 1.0218, 1.2215, 0.9);
     float dist = CombinedFractalDE(fractalPos, minFractalPos, maxFractalPos);
     
+    // Use 32-bit integers to hold 16-bit signed values
     int voxelID = 0; // Default to Air
-    uint metadata = 0; // Default metadata
+    int metadata = 0; // Default metadata
     
     // --- Default to generating Blocks ---
     if (dist < 0.0)
@@ -100,13 +104,13 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     }
     if (fractalPos.x > 0)
     {
-        voxelID = -1; // Block ID 1 (e.g., Dirt/Stone)
+        voxelID = -1; // Isosurface material ID -1
         float density = clamp(-dist, -1.0, 1.0);
         
-        // 将 [-1, 1] 的密度映射到 [0, 255] 的 metadata
-        metadata = (uint) (density * 127.0 + 128.0);
+        // Map float density [-1, 1] to signed 16-bit integer range [-32767, 32767]
+        metadata = (int) (density * 32767.0);
     }
 
-    asyncVoxelBuffer[index].voxelID = voxelID;
-    asyncVoxelBuffer[index].metadata = metadata;
+    // Pack voxelID (16-bit) and metadata (16-bit) into a single 32-bit uint
+    asyncVoxelBuffer[index].packedData = ((uint) metadata << 16) | ((uint) voxelID & 0x0000FFFF);
 }

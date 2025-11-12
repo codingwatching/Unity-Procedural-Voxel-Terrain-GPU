@@ -5,13 +5,13 @@ public class VoxelController : MonoBehaviour
 {
     [Header("Block Editing")]
     [Tooltip("The ID for blocks placed with the left mouse button.")]
-    [SerializeField] int blockMaterialId = 3; // Stone
+    [SerializeField] short blockMaterialId = 3; // Stone
 
     [Header("Smooth Voxel Editing")]
     [SerializeField] float smoothEditRadius = 3f;
     [SerializeField] float smoothEditIntensity = 0.5f;
     [Tooltip("The material ID (as a negative number) for smooth voxels.")]
-    [SerializeField] int smoothMaterialId = -3; // Stone material for isosurface
+    [SerializeField] short smoothMaterialId = -3; // Stone material for isosurface
 
     void Update()
     {

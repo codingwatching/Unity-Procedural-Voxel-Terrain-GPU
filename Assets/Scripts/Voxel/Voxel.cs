@@ -12,12 +12,13 @@ namespace OptIn.Voxel
         /// < 0: Isosurface material ID (absolute value).
         /// = 0: Air.
         /// </summary>
-        public int voxelID;
+        public short voxelID;
 
         /// <summary>
-        /// Metadata byte. For isosurface voxels (voxelID <= 0), this stores density.
+        /// For isosurface voxels (voxelID <= 0), this stores density, scaled to the range of a short.
+        /// For block voxels (voxelID > 0), this can be used for metadata (e.g., orientation, damage).
         /// </summary>
-        public byte metadata;
+        public short metadata;
 
         public static Voxel Empty => new Voxel { voxelID = 0, metadata = 0 };
 
@@ -26,11 +27,13 @@ namespace OptIn.Voxel
             get
             {
                 if (voxelID > 0) return 1f; // Blocks are always "full"
-                return (metadata - 128) / 127f;
+                // metadata stores density scaled from [-1, 1] to [-32767, 32767]
+                return metadata / 32767f;
             }
             set
             {
-                metadata = (byte)(math.clamp(value, -1f, 1f) * 127f + 128f);
+                // Scale float from [-1, 1] to short [-32767, 32767]
+                metadata = (short)(math.clamp(value, -1f, 1f) * 32767f);
             }
         }
 

@@ -160,7 +160,7 @@ public class TerrainGenerator : Singleton<TerrainGenerator>
         return true;
     }
 
-    public bool SetVoxel(Vector3 worldPosition, int voxelID)
+    public bool SetVoxel(Vector3 worldPosition, short voxelID)
     {
         Voxel voxel = new Voxel { voxelID = voxelID };
         if (voxelID <= 0) // Isosurface
@@ -190,7 +190,7 @@ public class TerrainGenerator : Singleton<TerrainGenerator>
         return false;
     }
 
-    public void ModifySphere(Vector3 center, float radius, float intensity, int materialId)
+    public void ModifySphere(Vector3 center, float radius, float intensity, short materialId)
     {
         int radiusInt = Mathf.CeilToInt(radius);
         HashSet<Vector3Int> dirtyChunks = new HashSet<Vector3Int>();
