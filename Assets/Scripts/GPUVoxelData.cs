@@ -27,7 +27,7 @@ public class GPUVoxelData : System.IDisposable
         _asyncVoxelBuffer = new AsyncComputeBuffer(numVoxels, voxelSize, ComputeBufferType.Default);
     }
 
-    public IEnumerator Generate(Voxel[] voxels, int3 chunkPosition, int3 newChunkSize, ComputeShader computeShader, VoxelMeshBuilder.SimplifyingMethod simplifyingMethod)
+    public IEnumerator Generate(Voxel[] voxels, int3 chunkPosition, int3 newChunkSize, ComputeShader computeShader)
     {
         if (!newChunkSize.Equals(currentChunkSize))
         {

@@ -18,13 +18,6 @@ namespace OptIn.Voxel
 
         public static readonly int2 AtlasSize = new int2(8, 8);
 
-        public enum SimplifyingMethod
-        {
-            Culling,
-            GreedyOnlyHeight,
-            Greedy,
-        };
-
         public class NativeMeshData
         {
             NativeArray<Voxel> nativeVoxels;
@@ -59,7 +52,7 @@ namespace OptIn.Voxel
                 if (counter.IsCreated) counter.Dispose();
             }
 
-            public IEnumerator ScheduleMeshingJob(Voxel[] voxels, int3 chunkSize, SimplifyingMethod method, bool argent = false)
+            public IEnumerator ScheduleMeshingJob(Voxel[] voxels, int3 chunkSize, bool argent = false)
             {
                 nativeVoxels.CopyFrom(voxels);
                 counter.Count = 0;
@@ -77,23 +70,9 @@ namespace OptIn.Voxel
                 indicesSize = counter.Count * 6;
             }
 
-            void ScheduleCullingJob(NativeArray<Voxel> voxels, int3 chunkSize)
-            {
-                VoxelCullingJob job = new VoxelCullingJob
-                {
-                    voxels = voxels,
-                    chunkSize = chunkSize,
-                    vertices = nativeVertices,
-                    indices = nativeIndices,
-                    counter = counter,
-                };
-                jobHandle = job.Schedule();
-                JobHandle.ScheduleBatchedJobs();
-            }
-
             void ScheduleDualContouringJob(NativeArray<Voxel> voxels, int3 chunkSize)
             {
-                VoxelDualContouringJob job = new VoxelDualContouringJob
+                VoxelMeshBuildJob job = new VoxelMeshBuildJob
                 {
                     voxels = voxels,
                     chunkSize = chunkSize,
@@ -104,79 +83,10 @@ namespace OptIn.Voxel
                 jobHandle = job.Schedule();
                 JobHandle.ScheduleBatchedJobs();
             }
-
-            void ScheduleGreedyOnlyHeightJob(NativeArray<Voxel> voxels, int3 chunkSize)
-            {
-                VoxelGreedyMeshingOnlyHeightJob job = new VoxelGreedyMeshingOnlyHeightJob
-                {
-                    voxels = voxels,
-                    chunkSize = chunkSize,
-                    vertices = nativeVertices,
-                    indices = nativeIndices,
-                    counter = counter,
-                };
-                jobHandle = job.Schedule();
-                JobHandle.ScheduleBatchedJobs();
-            }
-
-            void ScheduleGreedyJob(NativeArray<Voxel> voxels, int3 chunkSize)
-            {
-                VoxelGreedyMeshingJob job = new VoxelGreedyMeshingJob
-                {
-                    voxels = voxels,
-                    chunkSize = chunkSize,
-                    vertices = nativeVertices,
-                    indices = nativeIndices,
-                    counter = counter,
-                };
-                jobHandle = job.Schedule();
-                JobHandle.ScheduleBatchedJobs();
-            }
-        }
-
-        static bool IsVoxelSolid(NativeArray<Voxel> voxels, int3 position, int3 chunkSize)
-        {
-            if (!VoxelUtil.BoundaryCheck(position, chunkSize))
-                return false;
-            return voxels[VoxelUtil.To1DIndex(position, chunkSize)].IsSolid;
         }
 
         [BurstCompile]
-        struct VoxelCullingJob : IJob
-        {
-            [ReadOnly] public NativeArray<Voxel> voxels;
-            [ReadOnly] public int3 chunkSize;
-            [NativeDisableParallelForRestriction][WriteOnly] public NativeArray<GPUVertex> vertices;
-            [NativeDisableParallelForRestriction][WriteOnly] public NativeArray<int> indices;
-            [WriteOnly] public NativeCounter counter;
-
-            public void Execute()
-            {
-                // Iterate over the logical/inner volume of the chunk data (from 1 to size-2)
-                for (int x = 1; x < chunkSize.x - 1; x++)
-                    for (int y = 1; y < chunkSize.y - 1; y++)
-                        for (int z = 1; z < chunkSize.z - 1; z++)
-                        {
-                            int3 gridPosition = new int3(x, y, z);
-                            Voxel voxel = voxels[VoxelUtil.To1DIndex(gridPosition, chunkSize)];
-
-                            if (!voxel.IsBlock) continue;
-
-                            for (int direction = 0; direction < 6; direction++)
-                            {
-                                int3 neighborPosition = gridPosition + VoxelUtil.VoxelDirectionOffsets[direction];
-                                // Neighbor check is now safe due to padding
-                                if (IsVoxelSolid(voxels, neighborPosition, chunkSize)) continue;
-
-                                // Subtract 1 from gridPosition to move vertex from padded space to logical space
-                                AddQuadByDirection(direction, voxel.GetMaterialID(), 1.0f, 1.0f, gridPosition - 1, counter.Increment(), vertices, indices);
-                            }
-                        }
-            }
-        }
-
-        [BurstCompile]
-        struct VoxelDualContouringJob : IJob
+        struct VoxelMeshBuildJob : IJob
         {
             [ReadOnly] public NativeArray<Voxel> voxels;
             [ReadOnly] public int3 chunkSize;
@@ -295,123 +205,6 @@ namespace OptIn.Voxel
                                 }
                             }
                         }
-            }
-        }
-
-        [BurstCompile]
-        struct VoxelGreedyMeshingOnlyHeightJob : IJob
-        {
-            [ReadOnly] public NativeArray<Voxel> voxels;
-            [ReadOnly] public int3 chunkSize;
-            [NativeDisableParallelForRestriction][WriteOnly] public NativeArray<GPUVertex> vertices;
-            [NativeDisableParallelForRestriction][WriteOnly] public NativeArray<int> indices;
-            [WriteOnly] public NativeCounter counter;
-
-            public void Execute()
-            {
-                for (int direction = 0; direction < 6; direction++)
-                    // Iterate over the logical/inner volume
-                    for (int depth = 1; depth < chunkSize[VoxelUtil.DirectionAlignedZ[direction]] - 1; depth++)
-                        for (int x = 1; x < chunkSize[VoxelUtil.DirectionAlignedX[direction]] - 1; x++)
-                            for (int y = 1; y < chunkSize[VoxelUtil.DirectionAlignedY[direction]] - 1;)
-                            {
-                                int3 gridPosition = new int3 { [VoxelUtil.DirectionAlignedX[direction]] = x, [VoxelUtil.DirectionAlignedY[direction]] = y, [VoxelUtil.DirectionAlignedZ[direction]] = depth };
-                                Voxel voxel = voxels[VoxelUtil.To1DIndex(gridPosition, chunkSize)];
-
-                                if (!voxel.IsBlock) { y++; continue; }
-
-                                int3 neighborPosition = gridPosition + VoxelUtil.VoxelDirectionOffsets[direction];
-                                if (IsVoxelSolid(voxels, neighborPosition, chunkSize)) { y++; continue; }
-
-                                int height;
-                                for (height = 1; height + y < chunkSize[VoxelUtil.DirectionAlignedY[direction]] - 1; height++)
-                                {
-                                    int3 nextPosition = gridPosition;
-                                    nextPosition[VoxelUtil.DirectionAlignedY[direction]] += height;
-                                    Voxel nextVoxel = voxels[VoxelUtil.To1DIndex(nextPosition, chunkSize)];
-                                    if (nextVoxel.voxelID != voxel.voxelID) break;
-                                }
-                                AddQuadByDirection(direction, voxel.GetMaterialID(), 1.0f, height, gridPosition - 1, counter.Increment(), vertices, indices);
-                                y += height;
-                            }
-            }
-        }
-
-        [BurstCompile]
-        struct VoxelGreedyMeshingJob : IJob
-        {
-            [ReadOnly] public NativeArray<Voxel> voxels;
-            [ReadOnly] public int3 chunkSize;
-            [NativeDisableParallelForRestriction][WriteOnly] public NativeArray<GPUVertex> vertices;
-            [NativeDisableParallelForRestriction][WriteOnly] public NativeArray<int> indices;
-            [WriteOnly] public NativeCounter counter;
-            struct Empty { }
-
-            public void Execute()
-            {
-                for (int direction = 0; direction < 6; direction++)
-                {
-                    var hashMap = new NativeParallelHashMap<int3, Empty>(chunkSize[VoxelUtil.DirectionAlignedX[direction]] * chunkSize[VoxelUtil.DirectionAlignedY[direction]], Allocator.Temp);
-                    // Iterate over the logical/inner volume
-                    for (int depth = 1; depth < chunkSize[VoxelUtil.DirectionAlignedZ[direction]] - 1; depth++)
-                    {
-                        for (int x = 1; x < chunkSize[VoxelUtil.DirectionAlignedX[direction]] - 1; x++)
-                        {
-                            for (int y = 1; y < chunkSize[VoxelUtil.DirectionAlignedY[direction]] - 1;)
-                            {
-                                int3 gridPosition = new int3 { [VoxelUtil.DirectionAlignedX[direction]] = x, [VoxelUtil.DirectionAlignedY[direction]] = y, [VoxelUtil.DirectionAlignedZ[direction]] = depth };
-                                Voxel voxel = voxels[VoxelUtil.To1DIndex(gridPosition, chunkSize)];
-
-                                if (!voxel.IsBlock || hashMap.ContainsKey(gridPosition)) { y++; continue; }
-
-                                if (IsVoxelSolid(voxels, gridPosition + VoxelUtil.VoxelDirectionOffsets[direction], chunkSize)) { y++; continue; }
-
-                                hashMap.TryAdd(gridPosition, new Empty());
-
-                                int height;
-                                for (height = 1; height + y < chunkSize[VoxelUtil.DirectionAlignedY[direction]] - 1; height++)
-                                {
-                                    int3 nextPosition = gridPosition;
-                                    nextPosition[VoxelUtil.DirectionAlignedY[direction]] += height;
-                                    Voxel nextVoxel = voxels[VoxelUtil.To1DIndex(nextPosition, chunkSize)];
-                                    if (nextVoxel.voxelID != voxel.voxelID || hashMap.ContainsKey(nextPosition)) break;
-                                    hashMap.TryAdd(nextPosition, new Empty());
-                                }
-
-                                bool isDone = false;
-                                int width;
-                                for (width = 1; width + x < chunkSize[VoxelUtil.DirectionAlignedX[direction]] - 1; width++)
-                                {
-                                    for (int dy = 0; dy < height; dy++)
-                                    {
-                                        int3 nextPosition = gridPosition;
-                                        nextPosition[VoxelUtil.DirectionAlignedX[direction]] += width;
-                                        nextPosition[VoxelUtil.DirectionAlignedY[direction]] += dy;
-                                        Voxel nextVoxel = voxels[VoxelUtil.To1DIndex(nextPosition, chunkSize)];
-                                        if (nextVoxel.voxelID != voxel.voxelID || hashMap.ContainsKey(nextPosition))
-                                        {
-                                            isDone = true;
-                                            break;
-                                        }
-                                    }
-                                    if (isDone) break;
-                                    for (int dy = 0; dy < height; dy++)
-                                    {
-                                        int3 nextPosition = gridPosition;
-                                        nextPosition[VoxelUtil.DirectionAlignedX[direction]] += width;
-                                        nextPosition[VoxelUtil.DirectionAlignedY[direction]] += dy;
-                                        hashMap.TryAdd(nextPosition, new Empty());
-                                    }
-                                }
-
-                                AddQuadByDirection(direction, voxel.GetMaterialID(), width, height, gridPosition - 1, counter.Increment(), vertices, indices);
-                                y += height;
-                            }
-                        }
-                        hashMap.Clear();
-                    }
-                    hashMap.Dispose();
-                }
             }
         }
 

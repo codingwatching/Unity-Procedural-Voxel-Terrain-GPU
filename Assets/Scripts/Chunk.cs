@@ -91,7 +91,7 @@ public partial class Chunk : MonoBehaviour
         voxels = new Voxel[numVoxels];
         voxelData = new GPUVoxelData(VoxelUtil.ToInt3(paddedChunkSize));
         // 注意：此处的Compute Shader需要更新以匹配新的Voxel结构体布局才能正确生成密度数据。
-        yield return voxelData.Generate(voxels, VoxelUtil.ToInt3(chunkPosition), VoxelUtil.ToInt3(paddedChunkSize), generator.voxelComputeShader, generator.SimplifyingMethod);
+        yield return voxelData.Generate(voxels, VoxelUtil.ToInt3(chunkPosition), VoxelUtil.ToInt3(paddedChunkSize), generator.voxelComputeShader);
         dirty = true;
         initialized = true;
     }
@@ -125,7 +125,7 @@ public partial class Chunk : MonoBehaviour
 
         meshData?.Dispose();
         meshData = new VoxelMeshBuilder.NativeMeshData(VoxelUtil.ToInt3(paddedChunkSize));
-        yield return meshData.ScheduleMeshingJob(voxels, VoxelUtil.ToInt3(paddedChunkSize), generator.SimplifyingMethod, argent);
+        yield return meshData.ScheduleMeshingJob(voxels, VoxelUtil.ToInt3(paddedChunkSize), argent);
 
         meshData.GetMeshInformation(out int vertexCount, out int indexCount);
 
