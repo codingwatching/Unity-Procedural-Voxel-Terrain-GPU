@@ -113,6 +113,46 @@ public partial class Chunk : MonoBehaviour
         meshUpdator = StartCoroutine(nameof(UpdateMesh));
     }
 
+    /// <summary>
+    /// 从相邻区块更新此区块的Padding体素数据，以确保网格在边界处正确连接。
+    /// </summary>
+    private void UpdatePaddingVoxels()
+    {
+        if (generator == null) return;
+
+        Vector3 myOrigin = transform.position;
+
+        for (int x = 0; x < paddedChunkSize.x; x++)
+        {
+            for (int y = 0; y < paddedChunkSize.y; y++)
+            {
+                for (int z = 0; z < paddedChunkSize.z; z++)
+                {
+                    // 如果是内部体素，则跳过，因为它们的数据是权威的
+                    if (x > 0 && x < paddedChunkSize.x - 1 &&
+                        y > 0 && y < paddedChunkSize.y - 1 &&
+                        z > 0 && z < paddedChunkSize.z - 1)
+                    {
+                        continue;
+                    }
+
+                    // 这是一个Padding体素。计算其世界坐标。
+                    // 网格坐标 = 数组索引 - 1
+                    Vector3Int gridPos = new Vector3Int(x - 1, y - 1, z - 1);
+                    // 添加0.5f以获取体素中心点，避免浮点精度问题
+                    Vector3 worldPos = myOrigin + gridPos + Vector3.one * 0.5f;
+
+                    // 从TerrainGenerator获取该世界位置的权威体素数据
+                    if (generator.GetVoxel(worldPos, out Voxel authoritativeVoxel))
+                    {
+                        int my1DIndex = VoxelUtil.To1DIndex(new Vector3Int(x, y, z), paddedChunkSize);
+                        voxels[my1DIndex] = authoritativeVoxel;
+                    }
+                }
+            }
+        }
+    }
+
     IEnumerator UpdateMesh()
     {
         if (Updating)
@@ -122,6 +162,9 @@ public partial class Chunk : MonoBehaviour
             yield break;
 
         generator.UpdatingChunks++;
+
+        // 在构建网格之前，从邻居那里更新填充体素
+        UpdatePaddingVoxels();
 
         meshData?.Dispose();
         meshData = new VoxelMeshBuilder.NativeMeshData(VoxelUtil.ToInt3(paddedChunkSize));
