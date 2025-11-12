@@ -134,39 +134,38 @@ namespace OptIn.Voxel
 
             public void Execute()
             {
-                // Iterate over all cells that could define an edge for the logical volume.
-                for (int x = 0; x < chunkSize.x - 1; x++)
-                    for (int y = 0; y < chunkSize.y - 1; y++)
-                        for (int z = 0; z < chunkSize.z - 1; z++)
+                // [FIX] 迭代逻辑卷。Padding仅用于读取邻居数据。
+                // 逻辑体素在填充数组中的索引范围是 [1, chunkSize-2]。
+                // 我们循环遍历这些逻辑体素来生成网格。
+                for (int x = 1; x < chunkSize.x - 1; x++)
+                    for (int y = 1; y < chunkSize.y - 1; y++)
+                        for (int z = 1; z < chunkSize.z - 1; z++)
                         {
                             var pos = new int3(x, y, z);
 
-                            // --- Block Culling Logic within the Dual Contouring loop ---
-                            // We only generate block faces if the block itself is within the logical volume
-                            if (x > 0 && y > 0 && z > 0)
+                            // --- Block Culling Logic ---
+                            // pos现在保证是逻辑体素，因此之前的 (x>0) 检查是多余的。
+                            var voxel = GetVoxelOrEmpty(pos);
+                            if (voxel.IsBlock)
                             {
-                                var voxel = GetVoxelOrEmpty(pos);
-                                if (voxel.IsBlock)
+                                for (int direction = 0; direction < 6; direction++)
                                 {
-                                    for (int direction = 0; direction < 6; direction++)
+                                    Voxel neighborVoxel = GetVoxelOrEmpty(pos + VoxelUtil.VoxelDirectionOffsets[direction]);
+                                    if (!neighborVoxel.IsBlock)
                                     {
-                                        Voxel neighborVoxel = GetVoxelOrEmpty(pos + VoxelUtil.VoxelDirectionOffsets[direction]);
-                                        if (!neighborVoxel.IsBlock)
-                                        {
-                                            AddQuadByDirection(direction, voxel.GetMaterialID(), 1.0f, 1.0f, pos - 1, counter.Increment(), vertices, indices);
-                                        }
+                                        AddQuadByDirection(direction, voxel.GetMaterialID(), 1.0f, 1.0f, pos - 1, counter.Increment(), vertices, indices);
                                     }
                                 }
                             }
 
                             // --- Smooth/Isosurface Logic ---
+                            // 我们只检查从逻辑体素开始，朝向正方向的边，以避免重复生成面。
+                            // 这样做是安全的，因为相邻区块会处理另一侧的边界。
                             for (int axis = 0; axis < 3; axis++)
                             {
                                 var neighbor = GetVoxelOrEmpty(pos + VoxelUtil.DC_AXES[axis]);
-                                var voxel = GetVoxelOrEmpty(pos);
+                                // var voxel = GetVoxelOrEmpty(pos); // 已在上面获取
 
-                                // This condition now correctly handles only smooth-to-smooth transitions.
-                                // Block-to-smooth transitions are handled above, preventing double faces.
                                 if (voxel.IsIsosurface && neighbor.IsIsosurface && SignChanged(voxel, neighbor))
                                 {
                                     int quadIndex = counter.Increment();
