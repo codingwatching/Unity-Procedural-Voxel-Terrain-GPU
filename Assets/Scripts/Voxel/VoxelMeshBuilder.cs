@@ -52,16 +52,13 @@ namespace OptIn.Voxel
                 if (counter.IsCreated) counter.Dispose();
             }
 
-            public IEnumerator ScheduleMeshingJob(Voxel[] voxels, int3 chunkSize, bool argent = false)
+            public void ScheduleMeshingJob(Voxel[] voxels, int3 chunkSize)
             {
                 nativeVoxels.CopyFrom(voxels);
                 counter.Count = 0;
 
                 // 强制使用已修复的、包含正确分离逻辑的DualContouringJob
                 ScheduleDualContouringJob(nativeVoxels, chunkSize);
-
-                yield return new WaitUntil(() => jobHandle.IsCompleted || argent);
-                jobHandle.Complete();
             }
 
             public void GetMeshInformation(out int verticeSize, out int indicesSize)

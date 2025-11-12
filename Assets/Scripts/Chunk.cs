@@ -120,33 +120,61 @@ public partial class Chunk : MonoBehaviour
     {
         if (generator == null) return;
 
-        Vector3 myOrigin = transform.position;
-
-        for (int x = 0; x < paddedChunkSize.x; x++)
+        // 遍历26个方向的邻居
+        for (int dx = -1; dx <= 1; dx++)
         {
-            for (int y = 0; y < paddedChunkSize.y; y++)
+            for (int dy = -1; dy <= 1; dy++)
             {
-                for (int z = 0; z < paddedChunkSize.z; z++)
+                for (int dz = -1; dz <= 1; dz++)
                 {
-                    // 如果是内部体素，则跳过，因为它们的数据是权威的
-                    if (x > 0 && x < paddedChunkSize.x - 1 &&
-                        y > 0 && y < paddedChunkSize.y - 1 &&
-                        z > 0 && z < paddedChunkSize.z - 1)
+                    if (dx == 0 && dy == 0 && dz == 0) continue;
+
+                    // 获取邻居区块
+                    Vector3Int neighborChunkPos = chunkPosition + new Vector3Int(dx, dy, dz);
+                    if (!generator.TryGetChunk(neighborChunkPos, out Chunk neighborChunk) || !neighborChunk.Initialized)
                     {
-                        continue;
+                        continue; // 如果邻居不存在或未初始化，则跳过
                     }
 
-                    // 这是一个Padding体素。计算其世界坐标。
-                    // 网格坐标 = 数组索引 - 1
-                    Vector3Int gridPos = new Vector3Int(x - 1, y - 1, z - 1);
-                    // 添加0.5f以获取体素中心点，避免浮点精度问题
-                    Vector3 worldPos = myOrigin + gridPos + Vector3.one * 0.5f;
+                    Voxel[] neighborVoxels = neighborChunk.Voxels;
 
-                    // 从TerrainGenerator获取该世界位置的权威体素数据
-                    if (generator.GetVoxel(worldPos, out Voxel authoritativeVoxel))
+                    // --- 确定要复制的源区域和目标区域 ---
+                    // 所有坐标都在区块本地的 padded 空间中
+
+                    // 邻居区块中源数据区域的起始坐标
+                    int srcX_start = (dx == 1) ? 1 : (dx == -1 ? logicalChunkSize.x : 1);
+                    int srcY_start = (dy == 1) ? 1 : (dy == -1 ? logicalChunkSize.y : 1);
+                    int srcZ_start = (dz == 1) ? 1 : (dz == -1 ? logicalChunkSize.z : 1);
+
+                    // 邻居区块中源数据区域的结束坐标
+                    int srcX_end = (dx == 1) ? 1 : (dx == -1 ? logicalChunkSize.x : logicalChunkSize.x);
+                    int srcY_end = (dy == 1) ? 1 : (dy == -1 ? logicalChunkSize.y : logicalChunkSize.y);
+                    int srcZ_end = (dz == 1) ? 1 : (dz == -1 ? logicalChunkSize.z : logicalChunkSize.z);
+
+                    // 本区块中目标Padding区域的起始坐标
+                    int dstX_start = (dx == 1) ? paddedChunkSize.x - 1 : (dx == -1 ? 0 : 1);
+                    int dstY_start = (dy == 1) ? paddedChunkSize.y - 1 : (dy == -1 ? 0 : 1);
+                    int dstZ_start = (dz == 1) ? paddedChunkSize.z - 1 : (dz == -1 ? 0 : 1);
+
+                    // 循环遍历源数据区域，并将其复制到目标Padding区域
+                    // 这是一个高效的内存块操作，避免了昂贵的坐标转换
+                    for (int x = srcX_start; x <= srcX_end; x++)
                     {
-                        int my1DIndex = VoxelUtil.To1DIndex(new Vector3Int(x, y, z), paddedChunkSize);
-                        voxels[my1DIndex] = authoritativeVoxel;
+                        for (int y = srcY_start; y <= srcY_end; y++)
+                        {
+                            for (int z = srcZ_start; z <= srcZ_end; z++)
+                            {
+                                // 计算目标坐标
+                                int dstX = dstX_start + (x - srcX_start);
+                                int dstY = dstY_start + (y - srcY_start);
+                                int dstZ = dstZ_start + (z - srcZ_start);
+
+                                int srcIndex = VoxelUtil.To1DIndex(new Vector3Int(x, y, z), paddedChunkSize);
+                                int dstIndex = VoxelUtil.To1DIndex(new Vector3Int(dstX, dstY, dstZ), paddedChunkSize);
+
+                                voxels[dstIndex] = neighborVoxels[srcIndex];
+                            }
+                        }
                     }
                 }
             }
@@ -168,7 +196,15 @@ public partial class Chunk : MonoBehaviour
 
         meshData?.Dispose();
         meshData = new VoxelMeshBuilder.NativeMeshData(VoxelUtil.ToInt3(paddedChunkSize));
-        yield return meshData.ScheduleMeshingJob(voxels, VoxelUtil.ToInt3(paddedChunkSize), argent);
+
+        // 1. 分派作业（非阻塞）
+        meshData.ScheduleMeshingJob(voxels, VoxelUtil.ToInt3(paddedChunkSize));
+
+        // 2. 非阻塞地等待作业完成
+        yield return new WaitUntil(() => meshData.jobHandle.IsCompleted);
+
+        // 3. 作业完成后，安全地完成句柄并应用数据
+        meshData.jobHandle.Complete();
 
         meshData.GetMeshInformation(out int vertexCount, out int indexCount);
 

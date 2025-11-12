@@ -138,6 +138,11 @@ public class TerrainGenerator : Singleton<TerrainGenerator>
         return chunks.TryGetValue(chunkPosition, out chunk);
     }
 
+    public bool TryGetChunk(Vector3Int chunkPosition, out Chunk chunk)
+    {
+        return chunks.TryGetValue(chunkPosition, out chunk);
+    }
+
     public bool GetVoxel(Vector3 worldPosition, out Voxel voxel)
     {
         if (GetChunk(worldPosition, out Chunk chunk))
