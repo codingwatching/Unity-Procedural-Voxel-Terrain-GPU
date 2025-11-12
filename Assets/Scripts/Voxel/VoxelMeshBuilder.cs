@@ -120,31 +120,69 @@ namespace OptIn.Voxel
                 return crossings > 0 ? pointSum / crossings : (float3)pos + 0.5f;
             }
 
-            private float3 CalculateGradient(int3 pos)
+            private float GetDensityForGradient(int3 pos, int3 chunkSize, [ReadOnly] NativeArray<Voxel> voxelData)
             {
-                // BUG FIX 1: 法线方向必须指向密度减少的方向 (-gradient) 才能朝外。
-                float dx = GetVoxelOrEmpty(pos + new int3(1, 0, 0)).Density - GetVoxelOrEmpty(pos - new int3(1, 0, 0)).Density;
-                float dy = GetVoxelOrEmpty(pos + new int3(0, 1, 0)).Density - GetVoxelOrEmpty(pos - new int3(0, 1, 0)).Density;
-                float dz = GetVoxelOrEmpty(pos + new int3(0, 0, 1)).Density - GetVoxelOrEmpty(pos - new int3(0, 0, 1)).Density;
-                float3 grad = new float3(dx, dy, dz);
+                return voxelData[VoxelUtil.To1DIndex(pos, chunkSize)].Density;
+            }
 
-                // 返回-grad的归一化向量，提供一个安全的备用值(0,1,0)。
+            private float3 CalculatePaddedGradient(int3 pos, int3 chunkSize, [ReadOnly] NativeArray<Voxel> voxelData)
+            {
+                float dx, dy, dz;
+
+                // X-axis
+                if (pos.x == 0)
+                    dx = GetDensityForGradient(pos + new int3(1, 0, 0), chunkSize, voxelData) - GetDensityForGradient(pos, chunkSize, voxelData);
+                else if (pos.x == chunkSize.x - 1)
+                    dx = GetDensityForGradient(pos, chunkSize, voxelData) - GetDensityForGradient(pos - new int3(1, 0, 0), chunkSize, voxelData);
+                else
+                    dx = (GetDensityForGradient(pos + new int3(1, 0, 0), chunkSize, voxelData) - GetDensityForGradient(pos - new int3(1, 0, 0), chunkSize, voxelData)) * 0.5f;
+
+                // Y-axis
+                if (pos.y == 0)
+                    dy = GetDensityForGradient(pos + new int3(0, 1, 0), chunkSize, voxelData) - GetDensityForGradient(pos, chunkSize, voxelData);
+                else if (pos.y == chunkSize.y - 1)
+                    dy = GetDensityForGradient(pos, chunkSize, voxelData) - GetDensityForGradient(pos - new int3(0, 1, 0), chunkSize, voxelData);
+                else
+                    dy = (GetDensityForGradient(pos + new int3(0, 1, 0), chunkSize, voxelData) - GetDensityForGradient(pos - new int3(0, 1, 0), chunkSize, voxelData)) * 0.5f;
+
+                // Z-axis
+                if (pos.z == 0)
+                    dz = GetDensityForGradient(pos + new int3(0, 0, 1), chunkSize, voxelData) - GetDensityForGradient(pos, chunkSize, voxelData);
+                else if (pos.z == chunkSize.z - 1)
+                    dz = GetDensityForGradient(pos, chunkSize, voxelData) - GetDensityForGradient(pos - new int3(0, 0, 1), chunkSize, voxelData);
+                else
+                    dz = (GetDensityForGradient(pos + new int3(0, 0, 1), chunkSize, voxelData) - GetDensityForGradient(pos - new int3(0, 0, 1), chunkSize, voxelData)) * 0.5f;
+
+                float3 grad = new float3(dx, dy, dz);
                 return math.normalizesafe(-grad, new float3(0, 1, 0));
             }
 
             public void Execute()
             {
-                // [FIX] 迭代逻辑卷。Padding仅用于读取邻居数据。
-                // 逻辑体素在填充数组中的索引范围是 [1, chunkSize-2]。
-                // 我们循环遍历这些逻辑体素来生成网格。
+                int numVoxels = chunkSize.x * chunkSize.y * chunkSize.z;
+                var gradients = new NativeArray<float3>(numVoxels, Allocator.Temp, NativeArrayOptions.UninitializedMemory);
+
+                // Pass 1: Pre-calculate all gradients using a safe method for boundaries
+                for (int x = 0; x < chunkSize.x; x++)
+                {
+                    for (int y = 0; y < chunkSize.y; y++)
+                    {
+                        for (int z = 0; z < chunkSize.z; z++)
+                        {
+                            var pos = new int3(x, y, z);
+                            int index = VoxelUtil.To1DIndex(pos, chunkSize);
+                            gradients[index] = CalculatePaddedGradient(pos, chunkSize, voxels);
+                        }
+                    }
+                }
+
+                // Pass 2: Build mesh using pre-calculated gradients
                 for (int x = 1; x < chunkSize.x - 1; x++)
                     for (int y = 1; y < chunkSize.y - 1; y++)
                         for (int z = 1; z < chunkSize.z - 1; z++)
                         {
                             var pos = new int3(x, y, z);
 
-                            // --- Block Culling Logic ---
-                            // pos现在保证是逻辑体素，因此之前的 (x>0) 检查是多余的。
                             var voxel = GetVoxelOrEmpty(pos);
                             if (voxel.IsBlock)
                             {
@@ -158,13 +196,9 @@ namespace OptIn.Voxel
                                 }
                             }
 
-                            // --- Smooth/Isosurface Logic ---
-                            // 我们只检查从逻辑体素开始，朝向正方向的边，以避免重复生成面。
-                            // 这样做是安全的，因为相邻区块会处理另一侧的边界。
                             for (int axis = 0; axis < 3; axis++)
                             {
                                 var neighbor = GetVoxelOrEmpty(pos + VoxelUtil.DC_AXES[axis]);
-                                // var voxel = GetVoxelOrEmpty(pos); // 已在上面获取
 
                                 if (voxel.IsIsosurface && neighbor.IsIsosurface && SignChanged(voxel, neighbor))
                                 {
@@ -177,7 +211,7 @@ namespace OptIn.Voxel
                                         vertices[quadIndex * 4 + i] = new GPUVertex
                                         {
                                             position = CalculateFeaturePoint(cornerPos) - 1,
-                                            normal = CalculateGradient(cornerPos),
+                                            normal = gradients[VoxelUtil.To1DIndex(cornerPos, chunkSize)],
                                             uv = new float4(0, 0, materialId, 0)
                                         };
                                     }
@@ -204,6 +238,8 @@ namespace OptIn.Voxel
                                 }
                             }
                         }
+
+                gradients.Dispose();
             }
         }
 
