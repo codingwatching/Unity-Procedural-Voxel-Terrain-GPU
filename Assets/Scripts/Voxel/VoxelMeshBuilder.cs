@@ -109,7 +109,7 @@ namespace OptIn.Voxel
                 {
                     Voxel v1 = GetVoxelOrEmpty(pos + VoxelUtil.DC_VERT[VoxelUtil.DC_EDGE[i, 0]]);
                     Voxel v2 = GetVoxelOrEmpty(pos + VoxelUtil.DC_VERT[VoxelUtil.DC_EDGE[i, 1]]);
-                    if (SignChanged(v1, v2))
+                    if (v1.IsIsosurface && v2.IsIsosurface && SignChanged(v1, v2))
                     {
                         float t = math.unlerp(v1.Density, v2.Density, 0f);
                         if (!float.IsFinite(t)) t = 0.5f;
@@ -182,13 +182,17 @@ namespace OptIn.Voxel
                         for (int z = 1; z < chunkSize.z - 1; z++)
                         {
                             var pos = new int3(x, y, z);
-
                             var voxel = GetVoxelOrEmpty(pos);
+
+                            // --- Block Meshing Logic ---
                             if (voxel.IsBlock)
                             {
                                 for (int direction = 0; direction < 6; direction++)
                                 {
                                     Voxel neighborVoxel = GetVoxelOrEmpty(pos + VoxelUtil.VoxelDirectionOffsets[direction]);
+                                    // FIX: Generate a face if the neighbor is NOT a block.
+                                    // This treats smooth voxels (IsIsosurface) and Air as empty space,
+                                    // which is the desired behavior for creating a hard seam.
                                     if (!neighborVoxel.IsBlock)
                                     {
                                         AddQuadByDirection(direction, voxel.GetMaterialID(), 1.0f, 1.0f, pos - 1, counter.Increment(), vertices, indices);
@@ -196,10 +200,14 @@ namespace OptIn.Voxel
                                 }
                             }
 
+                            // --- Smooth Meshing (Dual Contouring) Logic ---
                             for (int axis = 0; axis < 3; axis++)
                             {
                                 var neighbor = GetVoxelOrEmpty(pos + VoxelUtil.DC_AXES[axis]);
 
+                                // FIX: Generate a smooth face ONLY IF both the current voxel and its neighbor
+                                // are of the isosurface type (which includes Air).
+                                // This explicitly stops the smooth mesher from trying to blend with block voxels.
                                 if (voxel.IsIsosurface && neighbor.IsIsosurface && SignChanged(voxel, neighbor))
                                 {
                                     int quadIndex = counter.Increment();
