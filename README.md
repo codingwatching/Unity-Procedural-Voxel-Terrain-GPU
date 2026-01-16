@@ -7,7 +7,7 @@
 
 算了以后再说 没有方便的ecs没法玩
 ## Todo
-- **GPU 只回传体素数据，使用体素生成贪婪碰撞体，从而无需回传网格，并直接使用 `Graphics.DrawProceduralIndirect` 在 GPU 上渲染区块**
+- 等UnityECS真正可用并且易于开发时重构
 
 # Unity-Procedural-Voxel-Terrain
 
