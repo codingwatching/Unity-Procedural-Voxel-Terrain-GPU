@@ -114,26 +114,33 @@ namespace OptIn.Voxel
 
             public void Execute()
             {
+                int3 paddedSize = chunkSize + new int3(2, 2, 2); 
+
                 for (int direction = 0; direction < 6; direction++)
                 {
                     NativeHashMap<int3, Empty> visited = new NativeHashMap<int3, Empty>(
                         chunkSize[VoxelUtil.DirectionAlignedX[direction]] * chunkSize[VoxelUtil.DirectionAlignedY[direction]], 
                         Allocator.Temp);
 
-                    for (int depth = 1; depth < chunkSize[VoxelUtil.DirectionAlignedZ[direction]] - 1; depth++)
+                    // Iterate over Logical Coordinates (0 to Size)
+                    for (int depth = 0; depth < chunkSize[VoxelUtil.DirectionAlignedZ[direction]]; depth++)
                     {
-                        for (int x = 1; x < chunkSize[VoxelUtil.DirectionAlignedX[direction]] - 1; x++)
+                        for (int x = 0; x < chunkSize[VoxelUtil.DirectionAlignedX[direction]]; x++)
                         {
-                            for (int y = 1; y < chunkSize[VoxelUtil.DirectionAlignedY[direction]] - 1;)
+                            for (int y = 0; y < chunkSize[VoxelUtil.DirectionAlignedY[direction]];)
                             {
-                                int3 gridPosition = new int3 
+                                // Logical Position (0..31)
+                                int3 logicalPos = new int3 
                                 { 
                                     [VoxelUtil.DirectionAlignedX[direction]] = x, 
                                     [VoxelUtil.DirectionAlignedY[direction]] = y, 
                                     [VoxelUtil.DirectionAlignedZ[direction]] = depth 
                                 };
 
-                                int index = VoxelUtil.To1DIndex(gridPosition, chunkSize);
+                                // Map Logical -> Padded Index (Indices 1..32)
+                                // We add (1,1,1) to access the correct data in the padded array
+                                int3 paddedPos = logicalPos + new int3(1, 1, 1);
+                                int index = VoxelUtil.To1DIndex(paddedPos, paddedSize);
                                 Voxel voxel = voxels[index];
 
                                 // STRICT SEPARATION: Only process Blocks (> 0)
@@ -143,64 +150,72 @@ namespace OptIn.Voxel
                                     continue;
                                 }
 
-                                if (visited.ContainsKey(gridPosition))
+                                if (visited.ContainsKey(logicalPos))
                                 {
                                     y++;
                                     continue;
                                 }
 
-                                // Check neighbor for occlusion. For blocks, we check if neighbor is visible.
-                                // If neighbor is NOT transparent (meaning it's solid), we cull.
-                                int3 neighborPosition = gridPosition + VoxelUtil.VoxelDirectionOffsets[direction];
-                                if (!TransparencyCheck(voxels, neighborPosition, chunkSize))
+                                // Check neighbor for occlusion in PADDED space.
+                                // logicalPos + direction offset + padding offset(1)
+                                int3 neighborPaddedPos = paddedPos + VoxelUtil.VoxelDirectionOffsets[direction];
+                                if (!TransparencyCheck(voxels, neighborPaddedPos, paddedSize))
                                 {
                                     y++;
                                     continue;
                                 }
 
-                                visited.TryAdd(gridPosition, new Empty());
+                                visited.TryAdd(logicalPos, new Empty());
                                 int height;
-                                for (height = 1; height + y < chunkSize[VoxelUtil.DirectionAlignedY[direction]] - 1; height++)
+                                
+                                // Expand Height
+                                for (height = 1; height + y < chunkSize[VoxelUtil.DirectionAlignedY[direction]]; height++)
                                 {
-                                    int3 nextPosition = gridPosition;
-                                    nextPosition[VoxelUtil.DirectionAlignedY[direction]] += height;
+                                    // Logical check
+                                    int3 nextLogicalPos = logicalPos;
+                                    nextLogicalPos[VoxelUtil.DirectionAlignedY[direction]] += height;
 
-                                    if (visited.ContainsKey(nextPosition)) break;
+                                    if (visited.ContainsKey(nextLogicalPos)) break;
 
-                                    Voxel nextVoxel = voxels[VoxelUtil.To1DIndex(nextPosition, chunkSize)];
+                                    // Padded Data Check
+                                    int3 nextPaddedPos = nextLogicalPos + new int3(1,1,1);
+                                    Voxel nextVoxel = voxels[VoxelUtil.To1DIndex(nextPaddedPos, paddedSize)];
                                     if (nextVoxel.voxelID != voxel.voxelID) break; 
 
-                                    int3 nextNeighborPos = nextPosition + VoxelUtil.VoxelDirectionOffsets[direction];
-                                    if (!TransparencyCheck(voxels, nextNeighborPos, chunkSize)) break;
+                                    int3 nextNeighborPos = nextPaddedPos + VoxelUtil.VoxelDirectionOffsets[direction];
+                                    if (!TransparencyCheck(voxels, nextNeighborPos, paddedSize)) break;
 
-                                    visited.TryAdd(nextPosition, new Empty());
+                                    visited.TryAdd(nextLogicalPos, new Empty());
                                 }
 
                                 bool isDone = false;
                                 int width;
-                                for (width = 1; width + x < chunkSize[VoxelUtil.DirectionAlignedX[direction]] - 1; width++)
+                                
+                                // Expand Width
+                                for (width = 1; width + x < chunkSize[VoxelUtil.DirectionAlignedX[direction]]; width++)
                                 {
                                     for (int dy = 0; dy < height; dy++)
                                     {
-                                        int3 nextPosition = gridPosition;
-                                        nextPosition[VoxelUtil.DirectionAlignedX[direction]] += width;
-                                        nextPosition[VoxelUtil.DirectionAlignedY[direction]] += dy;
+                                        int3 nextLogicalPos = logicalPos;
+                                        nextLogicalPos[VoxelUtil.DirectionAlignedX[direction]] += width;
+                                        nextLogicalPos[VoxelUtil.DirectionAlignedY[direction]] += dy;
 
-                                        if (visited.ContainsKey(nextPosition))
+                                        if (visited.ContainsKey(nextLogicalPos))
                                         {
                                             isDone = true;
                                             break;
                                         }
 
-                                        Voxel nextVoxel = voxels[VoxelUtil.To1DIndex(nextPosition, chunkSize)];
+                                        int3 nextPaddedPos = nextLogicalPos + new int3(1,1,1);
+                                        Voxel nextVoxel = voxels[VoxelUtil.To1DIndex(nextPaddedPos, paddedSize)];
                                         if (nextVoxel.voxelID != voxel.voxelID) 
                                         {
                                             isDone = true;
                                             break;
                                         }
 
-                                        int3 nextNeighborPos = nextPosition + VoxelUtil.VoxelDirectionOffsets[direction];
-                                        if (!TransparencyCheck(voxels, nextNeighborPos, chunkSize))
+                                        int3 nextNeighborPos = nextPaddedPos + VoxelUtil.VoxelDirectionOffsets[direction];
+                                        if (!TransparencyCheck(voxels, nextNeighborPos, paddedSize))
                                         {
                                             isDone = true;
                                             break;
@@ -211,14 +226,15 @@ namespace OptIn.Voxel
 
                                     for (int dy = 0; dy < height; dy++)
                                     {
-                                        int3 nextPosition = gridPosition;
-                                        nextPosition[VoxelUtil.DirectionAlignedX[direction]] += width;
-                                        nextPosition[VoxelUtil.DirectionAlignedY[direction]] += dy;
-                                        visited.TryAdd(nextPosition, new Empty());
+                                        int3 nextLogicalPos = logicalPos;
+                                        nextLogicalPos[VoxelUtil.DirectionAlignedX[direction]] += width;
+                                        nextLogicalPos[VoxelUtil.DirectionAlignedY[direction]] += dy;
+                                        visited.TryAdd(nextLogicalPos, new Empty());
                                     }
                                 }
 
-                                AddQuadByDirection(direction, voxel.GetMaterialID(), width, height, gridPosition, counter.Increment(), vertices, indices);
+                                // Output in Logical Coordinates
+                                AddQuadByDirection(direction, voxel.GetMaterialID(), width, height, logicalPos, counter.Increment(), vertices, indices);
                                 y += height;
                             }
                         }
@@ -238,33 +254,29 @@ namespace OptIn.Voxel
             [NativeDisableParallelForRestriction] [WriteOnly] public NativeArray<int> indices;
             public NativeCounter.Concurrent counter;
 
-            private Voxel GetVoxelOrEmpty(int3 pos)
+            private Voxel GetVoxelOrEmpty(int3 pos, int3 paddedSize)
             {
-                return VoxelUtil.BoundaryCheck(pos, chunkSize) ? voxels[VoxelUtil.To1DIndex(pos, chunkSize)] : Voxel.Empty;
+                // Boundary check should technically be against Padded Size if we want to read padded data?
+                // Or rather, we just trust the index is within the array.
+                // VoxelUtil.BoundaryCheck checks if pos < size.
+                return VoxelUtil.BoundaryCheck(pos, paddedSize) ? voxels[VoxelUtil.To1DIndex(pos, paddedSize)] : Voxel.Empty;
             }
 
             private bool SignChanged(Voxel v1, Voxel v2) 
             {
-                // Only consider isosurface voxels (and air) for this check to avoid blending with blocks
                 if (v1.IsBlock || v2.IsBlock) return false;
-                
-                // Classic DC sign change: One is inside (density > 0), one is outside (density <= 0)
-                // Note: User defines Negative IDs as Smooth. 
-                // However, Density property handles the internal float conversion.
-                // We assume Air (ID 0) has Density <= 0. Smooth (ID < 0) has Density based on metadata.
                 return (v1.Density > 0) != (v2.Density > 0);
             }
 
-            private float3 CalculateFeaturePoint(int3 pos)
+            private float3 CalculateFeaturePoint(int3 pos, int3 paddedSize)
             {
                 float3 pointSum = float3.zero;
                 int crossings = 0;
                 for (int i = 0; i < 12; i++)
                 {
-                    Voxel v1 = GetVoxelOrEmpty(pos + VoxelUtil.DC_VERT[VoxelUtil.DC_EDGE[i, 0]]);
-                    Voxel v2 = GetVoxelOrEmpty(pos + VoxelUtil.DC_VERT[VoxelUtil.DC_EDGE[i, 1]]);
+                    Voxel v1 = GetVoxelOrEmpty(pos + VoxelUtil.DC_VERT[VoxelUtil.DC_EDGE[i, 0]], paddedSize);
+                    Voxel v2 = GetVoxelOrEmpty(pos + VoxelUtil.DC_VERT[VoxelUtil.DC_EDGE[i, 1]], paddedSize);
                     
-                    // STRICT CHECK: Only process if both are NOT blocks.
                     if (!v1.IsBlock && !v2.IsBlock && SignChanged(v1, v2))
                     {
                         float t = math.unlerp(v1.Density, v2.Density, 0f);
@@ -276,14 +288,9 @@ namespace OptIn.Voxel
                 return crossings > 0 ? pointSum / crossings : (float3)pos + 0.5f;
             }
 
-            private float GetDensityForGradient(int3 pos, int3 chunkSize, [ReadOnly] NativeArray<Voxel> voxelData)
+            private float GetDensityForGradient(int3 pos, int3 paddedSize, [ReadOnly] NativeArray<Voxel> voxelData)
             {
-                // Fallback for gradient calculation: treat blocks as full density or empty?
-                // For smooth meshing, we only care about smooth voxels.
-                // If we hit a block, return 0 (outside) or 1 (inside)? 
-                // To isolate, maybe just return density. Blocks have density 1.
-                // But we shouldn't really be calculating gradients ON blocks.
-                return voxelData[VoxelUtil.To1DIndex(pos, chunkSize)].Density;
+                return voxelData[VoxelUtil.To1DIndex(pos, paddedSize)].Density;
             }
 
             private float3 CalculatePaddedGradient(int3 pos, int3 chunkSize, [ReadOnly] NativeArray<Voxel> voxelData)
@@ -308,34 +315,58 @@ namespace OptIn.Voxel
 
             public void Execute()
             {
-                int numVoxels = chunkSize.x * chunkSize.y * chunkSize.z;
+                int3 paddedSize = chunkSize + new int3(2, 2, 2);
+                int numVoxels = paddedSize.x * paddedSize.y * paddedSize.z;
+                
+                // Note: Gradients array needs to be sized for PADDED data because we might look up neighbors?
+                // Actually, if we only calc gradients for logical voxels, we can size it for logical.
+                // But CalculatePaddedGradient looks at neighbors. 
+                // Let's keep gradients array matching the Voxel array size (Padded) for simplicity in indexing,
+                // even if we only populate the relevant internal part. 
+                // OR: map indices. keeping 1:1 with voxels is safest/easiest.
                 var gradients = new NativeArray<float3>(numVoxels, Allocator.Temp, NativeArrayOptions.UninitializedMemory);
 
-                // Pass 1: gradients
+                // Pass 1: gradients (Iterate Logical 0..31, map to Padded 1..32)
                 for (int x = 0; x < chunkSize.x; x++)
                     for (int y = 0; y < chunkSize.y; y++)
                         for (int z = 0; z < chunkSize.z; z++)
                         {
-                            var pos = new int3(x, y, z);
-                            int index = VoxelUtil.To1DIndex(pos, chunkSize);
-                            // Optim: Only calculate gradient if this or neighbor is smooth surface? 
-                            // For simplicity, calc for all.
-                            gradients[index] = CalculatePaddedGradient(pos, chunkSize, voxels);
+                            var logicalPos = new int3(x, y, z);
+                            var paddedPos = logicalPos + new int3(1, 1, 1);
+                            
+                            int index = VoxelUtil.To1DIndex(paddedPos, paddedSize);
+                            gradients[index] = CalculatePaddedGradient(paddedPos, paddedSize, voxels);
                         }
 
-                // Pass 2: Mesh
-                for (int x = 1; x < chunkSize.x - 1; x++)
-                    for (int y = 1; y < chunkSize.y - 1; y++)
-                        for (int z = 1; z < chunkSize.z - 1; z++)
+                // Pass 2: Mesh (Iterate Logical 0..31)
+                // Note: DC usually requires visiting edges. 
+                // If we iterate 0..Size-1 in logical, that covers internal edges.
+                // Boundary integrity? 
+                // Original loop was 1..Size-1 (Padded). ie Logical 0..Size-2?
+                // DC usually needs to run on N voxels to generate N surfaces? 
+                // Actually standard DC runs on cells. 
+                // Let's map strict 1:1 to previous logic:
+                // Prev: x = 1 to chunkSize.x - 1 (where chunkSize was 34). So x goes 1..32.
+                // Wait, < 33. So 1..32.
+                // Logical 0..31 maps to Padded 1..32.
+                // So strict logical loop 0..Size (strictly less than Size) corresponds to 1..Size+1?
+                // Original: x < 34-1 = 33. so x max is 32.
+                // So loop 0 to chunkSize (32) is correct.
+                
+                for (int x = 0; x < chunkSize.x; x++)
+                    for (int y = 0; y < chunkSize.y; y++)
+                        for (int z = 0; z < chunkSize.z; z++)
                         {
-                            var pos = new int3(x, y, z);
-                            var voxel = GetVoxelOrEmpty(pos);
+                            var logicalPos = new int3(x, y, z);
+                            var paddedPos = logicalPos + new int3(1, 1, 1);
+                            
+                            var voxel = GetVoxelOrEmpty(paddedPos, paddedSize); // Pass paddedSize
 
                             if (voxel.IsBlock) continue; // Skip blocks
 
                             for (int axis = 0; axis < 3; axis++)
                             {
-                                var neighbor = GetVoxelOrEmpty(pos + VoxelUtil.DC_AXES[axis]);
+                                var neighbor = GetVoxelOrEmpty(paddedPos + VoxelUtil.DC_AXES[axis], paddedSize); // Pass paddedSize
                                 
                                 if (neighbor.IsBlock) continue; // Skip if neighbor is block
 
@@ -348,11 +379,14 @@ namespace OptIn.Voxel
 
                                     for (int i = 0; i < 4; i++)
                                     {
-                                        var cornerPos = pos + VoxelUtil.DC_ADJACENT[axis, i];
+                                        var cornerPos = paddedPos + VoxelUtil.DC_ADJACENT[axis, i];
+                                        
+                                        float3 paddedFeaturePoint = CalculateFeaturePoint(cornerPos, paddedSize); // Pass paddedSize
+                                        
                                         vertices[quadIndex * 4 + i] = new GPUVertex
                                         {
-                                            position = CalculateFeaturePoint(cornerPos) - 1,
-                                            normal = gradients[VoxelUtil.To1DIndex(cornerPos, chunkSize)],
+                                            position = paddedFeaturePoint - 1, // Transform back to logical space
+                                            normal = gradients[VoxelUtil.To1DIndex(cornerPos, paddedSize)],
                                             uv = new float4(0, 0, materialId, 0)
                                         };
                                     }
@@ -417,7 +451,7 @@ namespace OptIn.Voxel
 
                 vertices[vertexStart + i] = new GPUVertex
                 {
-                    position = pos + gridPosition - 1, // Subtract padding (1) from position
+                    position = pos + gridPosition,
                     normal = VoxelUtil.VoxelDirectionOffsets[direction],
                     uv = uv
                 };

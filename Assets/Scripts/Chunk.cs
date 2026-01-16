@@ -198,7 +198,9 @@ public partial class Chunk : MonoBehaviour
         meshData = new VoxelMeshBuilder.NativeMeshData(VoxelUtil.ToInt3(paddedChunkSize));
 
         // 1. 分派作业（非阻塞）
-        meshData.ScheduleMeshingJob(voxels, VoxelUtil.ToInt3(paddedChunkSize));
+        // Pass Logic Chunk Size (32) to the jobs, as they now iterate 0..32 and handle padding lookups internally.
+        // The voxels array itself is still Padded Size (34), which matches meshData.nativeVoxels.
+        meshData.ScheduleMeshingJob(voxels, VoxelUtil.ToInt3(logicalChunkSize));
 
         // 2. 非阻塞地等待作业完成
         yield return new WaitUntil(() => meshData.jobHandle.IsCompleted);
