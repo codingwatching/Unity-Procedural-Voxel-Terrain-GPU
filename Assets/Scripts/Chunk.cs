@@ -226,10 +226,13 @@ public partial class Chunk : MonoBehaviour
             // 仅重新计算包围盒，避免重复计算法线
             mesh.RecalculateBounds();
 
-            if (argent)
-                SetSharedMesh(mesh);
-            else
-                VoxelColliderBuilder.Instance.Enqueue(this, mesh);
+            // Force synchronous update to prevent race conditions where mesh is cleared while baking
+            SetSharedMesh(mesh);
+            
+            // if (argent)
+            //     SetSharedMesh(mesh);
+            // else
+            //     VoxelColliderBuilder.Instance.Enqueue(this, mesh);
         }
 
         meshData.Dispose();

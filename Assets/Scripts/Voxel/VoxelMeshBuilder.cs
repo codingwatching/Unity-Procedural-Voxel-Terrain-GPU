@@ -120,11 +120,11 @@ namespace OptIn.Voxel
                         chunkSize[VoxelUtil.DirectionAlignedX[direction]] * chunkSize[VoxelUtil.DirectionAlignedY[direction]], 
                         Allocator.Temp);
 
-                    for (int depth = 0; depth < chunkSize[VoxelUtil.DirectionAlignedZ[direction]]; depth++)
+                    for (int depth = 1; depth < chunkSize[VoxelUtil.DirectionAlignedZ[direction]] - 1; depth++)
                     {
-                        for (int x = 0; x < chunkSize[VoxelUtil.DirectionAlignedX[direction]]; x++)
+                        for (int x = 1; x < chunkSize[VoxelUtil.DirectionAlignedX[direction]] - 1; x++)
                         {
-                            for (int y = 0; y < chunkSize[VoxelUtil.DirectionAlignedY[direction]];)
+                            for (int y = 1; y < chunkSize[VoxelUtil.DirectionAlignedY[direction]] - 1;)
                             {
                                 int3 gridPosition = new int3 
                                 { 
@@ -160,7 +160,7 @@ namespace OptIn.Voxel
 
                                 visited.TryAdd(gridPosition, new Empty());
                                 int height;
-                                for (height = 1; height + y < chunkSize[VoxelUtil.DirectionAlignedY[direction]]; height++)
+                                for (height = 1; height + y < chunkSize[VoxelUtil.DirectionAlignedY[direction]] - 1; height++)
                                 {
                                     int3 nextPosition = gridPosition;
                                     nextPosition[VoxelUtil.DirectionAlignedY[direction]] += height;
@@ -178,7 +178,7 @@ namespace OptIn.Voxel
 
                                 bool isDone = false;
                                 int width;
-                                for (width = 1; width + x < chunkSize[VoxelUtil.DirectionAlignedX[direction]]; width++)
+                                for (width = 1; width + x < chunkSize[VoxelUtil.DirectionAlignedX[direction]] - 1; width++)
                                 {
                                     for (int dy = 0; dy < height; dy++)
                                     {
@@ -417,7 +417,7 @@ namespace OptIn.Voxel
 
                 vertices[vertexStart + i] = new GPUVertex
                 {
-                    position = pos + gridPosition,
+                    position = pos + gridPosition - 1, // Subtract padding (1) from position
                     normal = VoxelUtil.VoxelDirectionOffsets[direction],
                     uv = uv
                 };
